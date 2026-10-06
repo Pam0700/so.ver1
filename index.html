@@ -66,7 +66,10 @@
 </fieldset>
 
 <button id="btnRun" type="button">Xử lý</button>
-<button id="btnDl" type="button" disabled>Tải xuống Excel</button>
+<div style="margin:8px 0">
+  <label style="display:inline">Tên file: <input type="text" id="fname" style="width:260px"> .xlsx</label>
+  <button id="btnDl" type="button" disabled>Tải xuống Excel</button>
+</div>
 <div id="msg" class="muted"></div>
 <div id="out"></div>
 
@@ -267,6 +270,12 @@ setStatus = function(){ _setStatus(); $('btnMap').disabled = !dgRows.length; };
 /* ---------- xử lý ---------- */
 const stripVG = s => s.replace(/viet\s*gap/gi,'').replace(/\(\s*\)/g,'').replace(/\s+/g,' ')
                       .replace(/\s+([,)])/g,'$1').replace(/[\s,\-–]+$/,'').trim();
+let fnameDirty = false;
+$('fname').addEventListener('input',()=>{ fnameDirty = true; });
+const outName = ()=>{
+  const n = $('fname').value.replace(/\.xlsx$/i,'').replace(/[\\/:*?"<>|]/g,'').trim() || 'ket_qua';
+  return n + '.xlsx';
+};
 let layout = [];   // dòng hiển thị: {cus, p, first, blank}
 
 $('btnRun').onclick = ()=>{
@@ -336,12 +345,12 @@ $('btnRun').onclick = ()=>{
   $('msg').innerHTML = warn + `<span class="ok">${list.length} khách/điểm giao, ${zones.length} vùng.</span>`
     + (over ? ` <span class="err">${over} vùng vượt ${limit} dòng vì 1 khách có quá nhiều sản phẩm (không tách khách).</span>` : '')
     + (noProd.size ? ` <span class="err">Code không có sản phẩm: ${[...noProd].join(', ')}</span>` : '');
+  if(!fnameDirty) $('fname').value = mode()==='ship' ? 'ket_qua_theo_ship' : 'ket_qua_theo_code';
   $('btnDl').disabled = false;
 };
 
 /* ---------- xuất Excel ---------- */
-$('btnDl').onclick = async ()=>{
-  if(!layout.length) return;
+async function buildResult(){
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Kết quả');
   ws.columns = [{width:55},{width:50}];
@@ -361,7 +370,11 @@ $('btnDl').onclick = async ()=>{
     const h = Math.max(lines, Math.ceil(x.p.length/45), 1) * 15;
     if(h>15) r.height = h;
   });
-  download(await wb.xlsx.writeBuffer(), mode()==='ship' ? 'ket_qua_theo_ship.xlsx' : 'ket_qua_theo_code.xlsx');
+  return await wb.xlsx.writeBuffer();
+}
+$('btnDl').onclick = async ()=>{
+  if(!layout.length) return;
+  download(await buildResult(), outName());
 };
 </script>
 </body>
