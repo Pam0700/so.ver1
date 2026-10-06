@@ -213,11 +213,21 @@ function norm(s){
   return s.toLowerCase().replace(/(\d)\s*(kg|gr|g)\b/g,(m,d,u)=>d+(u==='gr'?'g':u));
 }
 function makeRank(orderStr){
-  const kws = orderStr.split(/[,\n;]+/).map(x=>x.trim()).filter(Boolean).map(k=>{
+  const words = orderStr.split(/[,\n;]+/).map(x=>x.trim()).filter(Boolean);
+  const kws = words.map(k=>{
     const n = norm(k).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     return new RegExp('(?<![\\p{L}\\p{N}.,])'+n+'(?![\\p{L}\\p{N}])','u');
   });
-  return name => { const n = norm(name); const i = kws.findIndex(r=>r.test(n)); return i<0 ? kws.length : i; };
+  // tên có cả "500g" và "khay": xếp sau các nhóm đứng trước, trước nhóm chỉ có 500g / chỉ có khay
+  const iP = words.findIndex(w=>norm(w)==='500g'), iK = words.findIndex(w=>norm(w)==='khay');
+  const both = (iP>=0 && iK>=0) ? Math.min(iP,iK) - 0.5 : null;
+  return name => {
+    const n = norm(name);
+    const i = kws.findIndex(r=>r.test(n));
+    if(i<0) return kws.length;
+    if(both!==null && (i===iP || i===iK) && kws[iP].test(n) && kws[iK].test(n)) return both;
+    return i;
+  };
 }
 
 /* ---------- quy ước rút gọn ---------- */
@@ -336,7 +346,7 @@ $('btnRun').onclick = ()=>{
 
   let html = '<table><tr><th>Khách hàng</th><th>Sản phẩm</th></tr>';
   layout.forEach(r=>{
-    html += r.blank ? '<tr><td colspan="2" style="background:#f6f6f6;height:14px"></td></tr>'
+    html += r.blank ? '<tr><td colspan="2" style="background:#ffd966;height:10px;padding:0"></td></tr>'
       : '<tr>' + (r.first ? `<td class="cus grp">${esc(r.cus)}</td>` : '<td class="cus"></td>')
         + `<td${r.first?' class="grp"':''}>${esc(r.p)}</td></tr>`;
   });
@@ -360,7 +370,12 @@ async function buildResult(){
   head.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}};
     c.border={top:thin,bottom:thin,left:thin,right:thin}; });
   layout.forEach(x=>{
-    if(x.blank){ ws.addRow([]); return; }
+    if(x.blank){
+      const sep = ws.addRow(['','']);
+      sep.height = 10;
+      [1,2].forEach(i=>{ sep.getCell(i).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFFD966'}}; });
+      return;
+    }
     const r = ws.addRow([x.cus, x.p]);
     r.eachCell({includeEmpty:true},c=>{
       c.alignment = {wrapText:true, vertical:'top'};
