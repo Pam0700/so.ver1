@@ -1,0 +1,227 @@
+/*
+ * converter.js — Module độc lập: chuyển file CSV gốc (lỗi font TCVN3) thành dữ liệu đã lọc.
+ *
+ * Nhận 2 loại file CSV tải về (tự nhận dạng theo tiêu đề cột):
+ *   - File giao hàng (gd_...): lấy rDoc_number, rCv_name, rShip_to, rShip_doc_no
+ *       -> Code | Tên khách hàng | Điểm giao hàng | Ship      (giống file dg1)
+ *   - File chi tiết (50_...):  lấy SO, Ten sp
+ *       -> Code | Sản phẩm                                     (giống file 50 / 54)
+ *
+ * Cách gắn vào trang: thêm một thẻ div có id="converterBox" và nạp file converter.js bằng thẻ script (src).
+ * Trang chính (nếu có) gọi CPConverter.readFile(file) để đọc thẳng CSV mà không cần chuyển.
+ * Cần ExcelJS đã được nạp sẵn (chỉ dùng khi xuất .xlsx).
+ */
+(function (root) {
+  'use strict';
+
+  /* ---------- bảng TCVN3 (ABC): byte -> Unicode ---------- */
+  const TABLE = {
+    0xB5:'à',0xB6:'ả',0xB7:'ã',0xB8:'á',0xB9:'ạ',
+    0xA8:'ă',0xBB:'ằ',0xBC:'ẳ',0xBD:'ẵ',0xBE:'ắ',0xC6:'ặ',
+    0xA9:'â',0xC7:'ầ',0xC8:'ẩ',0xC9:'ẫ',0xCA:'ấ',0xCB:'ậ',
+    0xAE:'đ',
+    0xCC:'è',0xCE:'ẻ',0xCF:'ẽ',0xD0:'é',0xD1:'ẹ',
+    0xAA:'ê',0xD2:'ề',0xD3:'ể',0xD4:'ễ',0xD5:'ế',0xD6:'ệ',
+    0xD7:'ì',0xD8:'ỉ',0xDC:'ĩ',0xDD:'í',0xDE:'ị',
+    0xDF:'ò',0xE1:'ỏ',0xE2:'õ',0xE3:'ó',0xE4:'ọ',
+    0xAB:'ô',0xE5:'ồ',0xE6:'ổ',0xE7:'ỗ',0xE8:'ố',0xE9:'ộ',
+    0xAC:'ơ',0xEA:'ờ',0xEB:'ở',0xEC:'ỡ',0xED:'ớ',0xEE:'ợ',
+    0xEF:'ù',0xF1:'ủ',0xF2:'ũ',0xF3:'ú',0xF4:'ụ',
+    0xAD:'ư',0xF5:'ừ',0xF6:'ử',0xF7:'ữ',0xF8:'ứ',0xF9:'ự',
+    0xFA:'ỳ',0xFB:'ỷ',0xFC:'ỹ',0xFD:'ý',0xFE:'ỵ',
+    // chữ hoa có dấu mũ/móc (TCVN3 chỉ có riêng các chữ này)
+    0xA1:'Ă',0xA2:'Â',0xA3:'Ê',0xA4:'Ô',0xA5:'Ơ',0xA6:'Ư',0xA7:'Đ'
+  };
+
+  // TCVN3 không có chữ hoa có dấu thanh (Ả, Ế...) nên bị ghi thành chữ thường.
+  // Khôi phục cho các từ viết hoa toàn bộ, ví dụ "THảO" -> "THẢO".
+  const AMBIG = /[àảãáạằẳẵắặầẩẫấậèẻẽéẹềểễếệìỉĩíịòỏõóọồổỗốộờởỡớợùủũúụừửữứựỳỷỹýỵ]/;
+  const AMBIG_G = new RegExp(AMBIG.source, 'g');
+  function fixCaps(text) {
+    return text.replace(/[\p{L}\p{N}]+/gu, function (w) {
+      if (!AMBIG.test(w)) return w;
+      const letters = Array.from(w).filter(function (c) { return /\p{L}/u.test(c); });
+      const others = letters.filter(function (c) { return !AMBIG.test(c); });
+      if (others.length < 2) return w;
+      const allUpper = others.every(function (c) { return c === c.toUpperCase() && c !== c.toLowerCase(); });
+      return allUpper ? w.replace(AMBIG_G, function (c) { return c.toUpperCase(); }) : w;
+    });
+  }
+
+  /* ---------- giải mã ---------- */
+  function decodeBuffer(buf) {
+    const bytes = new Uint8Array(buf);
+    let high = false;
+    for (let i = 0; i < bytes.length; i++) { if (bytes[i] >= 0x80) { high = true; break; } }
+    const strip = function (s) { return s.replace(/^\uFEFF/, ''); };
+    if (!high) return strip(new TextDecoder('utf-8').decode(bytes));
+    try { // file đã là UTF-8 sẵn thì giữ nguyên
+      return strip(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    } catch (e) { /* không phải UTF-8 -> TCVN3 */ }
+    const cp = new TextDecoder('windows-1252');   // byte lạ (vd. "à", "–" gõ kiểu Windows)
+    const out = [];
+    for (let i = 0; i < bytes.length; i++) {
+      const c = bytes[i];
+      if (c < 0x80) out.push(String.fromCharCode(c));
+      else if (TABLE[c]) out.push(TABLE[c]);
+      else out.push(cp.decode(bytes.subarray(i, i + 1)));
+    }
+    return fixCaps(out.join(''));
+  }
+
+  /* ---------- đọc CSV ---------- */
+  function parseCSV(t) {
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (q) {
+        if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; }
+        else f += c;
+      } else if (c === '"' && f === '') q = true;
+      else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+      else if (c !== '\r') f += c;
+    }
+    if (f !== '' || row.length) { row.push(f); rows.push(row); }
+    return rows;
+  }
+
+  /* ---------- nhận dạng & lọc cột ---------- */
+  function findHeader(rows, names) {
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const low = rows[i].map(function (x) { return String(x).trim().toLowerCase(); });
+      if (names.every(function (n) { return low.indexOf(n) >= 0; })) {
+        return { i: i, idx: function (n) { return low.indexOf(n); } };
+      }
+    }
+    return null;
+  }
+  const T = function (s) { return String(s == null ? '' : s).trim(); };
+
+  function extract(rows, name) {
+    let h = findHeader(rows, ['rdoc_number', 'rcv_name', 'rship_to']);
+    if (h) {
+      const a = h.idx('rdoc_number'), b = h.idx('rcv_name'), c = h.idx('rship_to'), d = h.idx('rship_doc_no');
+      const out = [];
+      rows.slice(h.i + 1).forEach(function (r) {
+        const code = T(r[a]);
+        if (code) out.push({ code: code, cus: T(r[b]), point: T(r[c]), ship: d >= 0 ? T(r[d]) : '' });
+      });
+      return { name: name, type: 'gd', rows: out };
+    }
+    h = findHeader(rows, ['so', 'ten sp']);
+    if (h) {
+      const a = h.idx('so'), b = h.idx('ten sp');
+      const out = [];
+      rows.slice(h.i + 1).forEach(function (r) {
+        const code = T(r[a]), p = T(r[b]);
+        if (code && p) out.push({ code: code, name: p });
+      });
+      return { name: name, type: 'prod', rows: out };
+    }
+    return { name: name, type: null, rows: [] };
+  }
+
+  async function readFile(file) {
+    const text = decodeBuffer(await file.arrayBuffer());
+    return extract(parseCSV(text), file.name);
+  }
+
+  /* ---------- xuất Excel (định dạng giống dg1 / 50) ---------- */
+  async function buildXlsx(type, rows) {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    if (type === 'gd') {
+      ws.columns = [{ header: 'Code', width: 16 }, { header: 'Tên khách hàng', width: 50 },
+                    { header: 'Điểm giao hàng', width: 60 }, { header: 'Ship', width: 14 }];
+      rows.forEach(function (r) { ws.addRow([r.code, r.cus, r.point, r.ship]); });
+    } else {
+      ws.columns = [{ header: 'Code', width: 16 }, { header: 'Sản phẩm', width: 60 }];
+      rows.forEach(function (r) { ws.addRow([r.code, r.name]); });
+    }
+    ws.getRow(1).font = { bold: true };
+    return wb.xlsx.writeBuffer();
+  }
+
+  /* ---------- giao diện: chuyển nhiều file một lần ---------- */
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const outName = function (n) { return n.replace(/\.csv$/i, '').replace(/[_\s]+$/, '') + '_loc.xlsx'; };
+  function loadJSZip() {
+    if (root.JSZip) return Promise.resolve();
+    return new Promise(function (res, rej) {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload = res; s.onerror = function () { rej(new Error('Không tải được thư viện nén zip')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function initUI() {
+    const box = document.getElementById('converterBox');
+    if (!box) return;
+    box.innerHTML =
+      '<fieldset><legend>Chuyển file CSV gốc (sửa lỗi font + lọc dữ liệu)</legend>' +
+      '<input type="file" id="cvFiles" accept=".csv" multiple>' +
+      '<div class="muted">Chọn nhiều file CSV tải về cùng lúc (gd_..., 50_...). Trang tự nhận loại file, sửa font và chỉ giữ các cột cần dùng.</div>' +
+      '<div id="cvList" style="margin-top:6px"></div>' +
+      '<button id="cvAll" type="button" disabled>Tải tất cả (.zip)</button>' +
+      '<span id="cvMsg" class="muted"></span></fieldset>';
+    const list = box.querySelector('#cvList'), input = box.querySelector('#cvFiles'),
+          btnAll = box.querySelector('#cvAll'), msg = box.querySelector('#cvMsg');
+    let items = [];
+
+    function render() {
+      list.innerHTML = '';
+      items.forEach(function (it) {
+        const d = document.createElement('div');
+        d.style.margin = '3px 0';
+        const label = it.error ? 'Lỗi: ' + it.error
+          : it.type === 'gd' ? 'File giao hàng — ' + it.rows.length + ' dòng (' + it.rows.filter(function (r) { return r.ship; }).length + ' có Ship)'
+          : it.type === 'prod' ? 'File sản phẩm — ' + it.rows.length + ' dòng'
+          : 'Không nhận dạng được (thiếu cột rDoc_number/rCv_name/rShip_to hoặc SO/Ten sp)';
+        d.append(it.name + ': ' + label + ' ');
+        if (it.type) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.textContent = 'Tải ' + outName(it.name);
+          b.onclick = async function () { saveBlob(new Blob([await buildXlsx(it.type, it.rows)], { type: XLSX_MIME }), outName(it.name)); };
+          d.appendChild(b);
+        } else d.style.color = '#b00020';
+        list.appendChild(d);
+      });
+      btnAll.disabled = !items.some(function (x) { return x.type; });
+    }
+
+    input.addEventListener('change', async function () {
+      items = []; msg.textContent = ''; list.textContent = 'Đang xử lý...';
+      for (const f of input.files) {
+        try { items.push(await readFile(f)); }
+        catch (e) { items.push({ name: f.name, type: null, rows: [], error: e.message }); }
+      }
+      render();
+    });
+
+    btnAll.onclick = async function () {
+      try {
+        msg.textContent = ' Đang nén...';
+        await loadJSZip();
+        const z = new root.JSZip();
+        for (const it of items) if (it.type) z.file(outName(it.name), await buildXlsx(it.type, it.rows));
+        saveBlob(await z.generateAsync({ type: 'blob' }), 'file_da_loc.zip');
+        msg.textContent = '';
+      } catch (e) { msg.textContent = ' Lỗi: ' + e.message; }
+    };
+  }
+
+  const api = { decodeBuffer: decodeBuffer, parseCSV: parseCSV, extract: extract, readFile: readFile, buildXlsx: buildXlsx, fixCaps: fixCaps, initUI: initUI };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.CPConverter = api;
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI);
+    else initUI();
+  }
+})(typeof window !== 'undefined' ? window : globalThis);

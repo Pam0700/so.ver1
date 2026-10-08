@@ -30,14 +30,17 @@
 <fieldset>
   <legend>1. Tải file lên</legend>
   <label>File dg1 (Code, Tên khách hàng, Điểm giao hàng, Ship):
-    <input type="file" id="fDg" accept=".xlsx"></label>
+    <input type="file" id="fDg" accept=".xlsx,.csv"></label>
   <label>File sản phẩm (chọn cùng lúc file 50, 54... được nhiều file):
-    <input type="file" id="fPr" accept=".xlsx" multiple></label>
+    <input type="file" id="fPr" accept=".xlsx,.csv" multiple></label>
   <label>File quy ước rút gọn (tuỳ chọn, 4 cột: tên khách gốc, điểm giao gốc, Khách hàng, Điểm giao):
     <input type="file" id="fMap" accept=".xlsx"></label>
   <div id="status" class="muted"></div>
   <button id="btnMap" type="button" disabled>Tải file mẫu quy ước rút gọn (từ dg1)</button>
 </fieldset>
+
+<!-- Module chuyển CSV gốc (converter.js) — có thể gỡ bỏ độc lập -->
+<div id="converterBox"></div>
 
 <fieldset>
   <legend>2. Chọn dữ liệu</legend>
@@ -73,6 +76,7 @@
 <div id="msg" class="muted"></div>
 <div id="out"></div>
 
+<script src="converter.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let dgRows = [];          // {code, cus, point, ship}
@@ -95,9 +99,24 @@ function headerMap(ws){
   return m;
 }
 
+function afterDg(){
+  if(!hasShip){
+    document.querySelector('input[value=code]').checked = true;
+    document.querySelector('input[value=ship]').disabled = true;
+  } else document.querySelector('input[value=ship]').disabled = false;
+  setStatus(); renderList();
+}
 $('fDg').addEventListener('change', async e=>{
   const f = e.target.files[0]; if(!f) return;
   try{
+    if(/\.csv$/i.test(f.name)){            // CSV gốc (lỗi font) -> đọc trực tiếp
+      if(!window.CPConverter) throw new Error('thiếu module converter.js');
+      const res = await CPConverter.readFile(f);
+      if(res.type!=='gd') throw new Error('đây không phải file giao hàng (gd_...)');
+      dgRows = res.rows.map(r=>({code:clean(r.code),cus:clean(r.cus),point:clean(r.point),ship:clean(r.ship)}));
+      hasShip = dgRows.some(r=>r.ship);
+      afterDg(); return;
+    }
     const wb = await readWb(f);
     let ws = wb.worksheets.find(w=>Object.keys(headerMap(w)).includes('code')) || wb.worksheets[0];
     const h = headerMap(ws);
@@ -117,11 +136,7 @@ $('fDg').addEventListener('change', async e=>{
         ship: hasShip ? clean(row.getCell(cShip).text) : ''
       });
     });
-    if(!hasShip){
-      document.querySelector('input[value=code]').checked = true;
-      document.querySelector('input[value=ship]').disabled = true;
-    } else document.querySelector('input[value=ship]').disabled = false;
-    setStatus(); renderList();
+    afterDg();
   }catch(err){ $('status').innerHTML = '<span class="err">Không đọc được file dg1: '+err.message+'</span>'; }
 });
 
@@ -130,6 +145,18 @@ $('fPr').addEventListener('change', async e=>{
   prodIdx = new Map(); prodInfo = [];
   try{
     for(const file of e.target.files){
+      if(/\.csv$/i.test(file.name)){        // CSV gốc (lỗi font) -> đọc trực tiếp
+        if(!window.CPConverter) throw new Error('thiếu module converter.js');
+        const res = await CPConverter.readFile(file); let m = 0;
+        if(res.type==='prod') res.rows.forEach(r=>{
+          const code = clean(r.code), name = clean(r.name);
+          if(!code || !name) return;
+          if(!prodIdx.has(code)) prodIdx.set(code, []);
+          prodIdx.get(code).push(name); m++;
+        });
+        prodInfo.push({name:file.name, n:m});
+        continue;
+      }
       const wb = await readWb(file);
       let n = 0;
       for(const ws of wb.worksheets){
