@@ -41,6 +41,8 @@
 
 <!-- Module chuyển CSV gốc (converter.js) — có thể gỡ bỏ độc lập -->
 <div id="converterBox"></div>
+<!-- Module rút gọn tên sản phẩm (product-short.js) — có thể gỡ bỏ độc lập -->
+<div id="productShortBox"></div>
 
 <fieldset>
   <legend>2. Chọn dữ liệu</legend>
@@ -79,6 +81,7 @@
 <div id="out"></div>
 
 <script src="converter.js"></script>
+<script src="product-short.js"></script>
 <script src="template-fill.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -308,6 +311,12 @@ const _setStatus = setStatus;
 setStatus = function(){ _setStatus(); $('btnMap').disabled = !dgRows.length; };
 
 /* ---------- xử lý ---------- */
+// danh sách tên sản phẩm gốc (đã bỏ VietGap) cho module quy ước rút gọn sản phẩm
+window.CPGetProducts = ()=>{
+  const s = new Map();
+  prodIdx.forEach(arr=>arr.forEach(p=>{ const n = stripVG(clean(p)); if(n) s.set(n.toLowerCase(),n); }));
+  return [...s.values()].sort((a,b)=>a.localeCompare(b,'vi'));
+};
 const stripVG = s => s.replace(/viet\s*gap/gi,'').replace(/\(\s*\)/g,'').replace(/\s+/g,' ')
                       .replace(/\s+([,)])/g,'$1').replace(/[\s,\-–]+$/,'').trim();
 let fnameDirty = false;
@@ -347,13 +356,18 @@ $('btnRun').onclick = ()=>{
     const prods = prodIdx.get(r.code);
     if(!prods) noProd.add(r.code);
     (prods||[]).forEach(p=>{
-      const name = stripVG(p), k = name.toLowerCase();
-      if(name && !groups.get(key).prods.has(k)) groups.get(key).prods.set(k,name);
+      const orig = stripVG(p);
+      if(!orig) return;
+      // tên hiển thị = tên rút gọn (nếu có quy ước); thứ tự sắp xếp vẫn tính theo tên gốc
+      const name = window.CPProductShort ? CPProductShort.shorten(orig) : orig, k = name.toLowerCase();
+      const rk = rank(orig), cur = groups.get(key).prods.get(k);
+      if(!cur) groups.get(key).prods.set(k,{name, rk});
+      else if(rk < cur.rk) cur.rk = rk;
     });
   });
   const list = [...groups.values()].map(g=>({
     cus: g.cus,
-    products: [...g.prods.values()].sort((a,b)=>rank(a)-rank(b) || a.localeCompare(b,'vi'))
+    products: [...g.prods.values()].sort((a,b)=>a.rk-b.rk || a.name.localeCompare(b.name,'vi')).map(x=>x.name)
   }));
 
   window.CPLastGroups = list;   // dữ liệu cho module điền form báo cáo
