@@ -6,79 +6,162 @@
 <title>Tra cứu sản phẩm theo Ship / Code</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
-  body{font-family:Arial,Helvetica,sans-serif;max-width:900px;margin:20px auto;padding:0 12px;color:#222}
-  h1{font-size:20px}
-  fieldset{border:1px solid #ccc;margin:12px 0;padding:10px 14px}
-  legend{font-weight:bold}
-  label{display:block;margin:4px 0}
-  input[type=text],textarea{width:100%;box-sizing:border-box;padding:6px;font-size:14px}
-  button{padding:7px 14px;font-size:14px;cursor:pointer;margin:4px 4px 4px 0}
-  .list{border:1px solid #ccc;height:260px;overflow:auto;padding:4px 8px;margin-top:6px}
-  .list label{font-size:13px;margin:2px 0}
-  .muted{color:#666;font-size:13px}
+  :root{--bg:#f4f6f8;--card:#fff;--line:#e2e6ea;--ink:#1f2933;--muted:#667085;--acc:#2563eb;--accd:#1d4ed8;--side:#111827}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  .app{display:flex;min-height:100vh}
+  .side{width:230px;flex:0 0 230px;background:var(--side);color:#e5e7eb;position:sticky;top:0;height:100vh;padding:16px 10px;overflow-y:auto}
+  .brand{font-weight:700;font-size:15px;color:#fff;padding:4px 10px 14px}
+  .side nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:#cbd5e1;cursor:pointer;margin-bottom:2px;user-select:none}
+  .side nav a:hover{background:#1f2937}
+  .side nav a.active{background:var(--acc);color:#fff}
+  .side nav .n{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:#374151;display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:#fff}
+  .side nav a.active .n{background:rgba(255,255,255,.28)}
+  .side nav a.done .n{background:#16a34a}
+  .side .sep{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;padding:14px 12px 6px}
+  main{flex:1;min-width:0;padding:22px 26px 40px;max-width:1040px}
+  .top{display:none}
+  .overlay{display:none}
+  .panel{display:none}.panel.active{display:block}
+  h2{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 16px}
+  fieldset,.card{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:14px 16px;margin:0 0 14px;min-width:0}
+  legend{font-weight:600;padding:0 6px}
+  label{display:block;margin:8px 0 4px}
+  label.inl{display:inline-block;margin:4px 8px 4px 0}
+  input[type=text],textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
+  input[type=file]{max-width:100%;margin-top:4px}
+  button{padding:8px 14px;border:1px solid #cfd4da;background:#fff;border-radius:6px;cursor:pointer;font:inherit;margin:4px 6px 4px 0}
+  button:hover{background:#f3f4f6}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary,#tfGo{background:var(--acc);border-color:var(--acc);color:#fff}
+  button.primary:hover,#tfGo:hover{background:var(--accd)}
+  .list{border:1px solid var(--line);border-radius:6px;height:min(48vh,360px);overflow:auto;padding:4px 10px;margin-top:8px;background:#fff}
+  .list label{font-size:13px;margin:3px 0}
+  .muted{color:var(--muted);font-size:13px}
   .ok{color:#0a7a2f}.err{color:#b00020}
-  table{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
-  th,td{border:1px solid #bbb;padding:5px 7px;vertical-align:top;text-align:left}
-  th{background:#eee}
+  #out{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;margin-top:10px;font-size:13px;background:#fff}
+  th,td{border:1px solid #cfd4da;padding:5px 8px;vertical-align:top;text-align:left}
+  th{background:#eef0f3}
   td.cus{white-space:pre-wrap;width:50%}
   td.grp{border-top:2px solid #444}
+  @media (max-width:820px){
+    .side{position:fixed;left:0;top:0;bottom:0;z-index:30;transform:translateX(-100%);transition:transform .2s}
+    .side.open{transform:none}
+    .overlay.show{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:20}
+    .top{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);padding:8px 12px;margin:-22px -26px 16px}
+    .top button{margin:0;font-size:18px;padding:4px 12px}
+    main{padding:22px 14px 40px}
+    .top{margin:-22px -14px 16px}
+  }
 </style>
 </head>
 <body>
-<h1>Tra cứu sản phẩm theo Ship / Code</h1>
+<div class="overlay" id="overlay"></div>
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand">Tra cứu Ship / Code</div>
+    <nav id="nav">
+      <a data-p="p-upload" data-n="1" class="active"><span class="n">1</span>Tải dữ liệu</a>
+      <a data-p="p-select" data-n="2"><span class="n">2</span>Chọn &amp; xử lý</a>
+      <a data-p="p-result" data-n="3"><span class="n">3</span>Kết quả</a>
+      <a data-p="p-form" data-n="4"><span class="n">4</span>Điền form báo cáo</a>
+      <div class="sep">Công cụ</div>
+      <a data-p="p-convert" data-n="⇄"><span class="n">⇄</span>Chuyển CSV gốc</a>
+      <a data-p="p-short" data-n="Aa"><span class="n">Aa</span>Quy ước rút gọn</a>
+    </nav>
+  </aside>
 
-<fieldset>
-  <legend>1. Tải file lên</legend>
-  <label>File dg1 (Code, Tên khách hàng, Điểm giao hàng, Ship):
-    <input type="file" id="fDg" accept=".xlsx,.csv"></label>
-  <label>File sản phẩm (chọn cùng lúc file 50, 54... được nhiều file):
-    <input type="file" id="fPr" accept=".xlsx,.csv" multiple></label>
-  <label>File quy ước rút gọn (tuỳ chọn, 4 cột: tên khách gốc, điểm giao gốc, Khách hàng, Điểm giao):
-    <input type="file" id="fMap" accept=".xlsx"></label>
-  <div id="status" class="muted"></div>
-  <button id="btnMap" type="button" disabled>Tải file mẫu quy ước rút gọn (từ dg1)</button>
-</fieldset>
+  <main>
+    <header class="top"><button id="menuBtn" type="button" aria-label="Menu">&#9776;</button><strong>Tra cứu Ship / Code</strong></header>
 
-<!-- Module chuyển CSV gốc (converter.js) — có thể gỡ bỏ độc lập -->
-<div id="converterBox"></div>
-<!-- Module rút gọn tên sản phẩm (product-short.js) — có thể gỡ bỏ độc lập -->
-<div id="productShortBox"></div>
+    <section class="panel active" id="p-upload">
+      <h2>Tải dữ liệu</h2>
+      <p class="sub">Tải file giao hàng (dg1) và file sản phẩm (50, 54...). Nhận cả .xlsx lẫn .csv gốc lỗi font.</p>
+      <div class="card">
+        <label>File dg1 (Code, Tên khách hàng, Điểm giao hàng, Ship):
+          <input type="file" id="fDg" accept=".xlsx,.csv"></label>
+        <label>File sản phẩm (chọn cùng lúc file 50, 54... được nhiều file):
+          <input type="file" id="fPr" accept=".xlsx,.csv" multiple></label>
+        <div id="status" class="muted" style="margin-top:8px"></div>
+      </div>
+      <button type="button" class="primary" data-go="p-select">Tiếp: Chọn &amp; xử lý &rarr;</button>
+    </section>
 
-<fieldset>
-  <legend>2. Chọn dữ liệu</legend>
-  <label><input type="radio" name="mode" value="ship" checked> Theo Ship</label>
-  <label><input type="radio" name="mode" value="code"> Theo Code (gồm cả code không có Ship)</label>
-  <input type="text" id="search" placeholder="Tìm trong danh sách...">
-  <div>
-    <button id="btnAll" type="button">Chọn tất cả (đang hiện)</button>
-    <button id="btnNone" type="button">Bỏ chọn hết</button>
-    <button id="btnNoShip" type="button">Chọn code không có Ship</button>
-    <span id="selCount" class="muted"></span>
-  </div>
-  <div id="list" class="list"></div>
-  <div id="pasteBox" style="display:none">
-    <p class="muted">Hoặc dán nhiều code (cách nhau bằng dấu cách, phẩy hoặc xuống dòng):</p>
-    <textarea id="paste" rows="3"></textarea>
-  </div>
-</fieldset>
+    <section class="panel" id="p-select">
+      <h2>Chọn &amp; xử lý</h2>
+      <p class="sub">Chọn Ship hoặc Code cần lấy, đặt cách sắp xếp rồi bấm Xử lý.</p>
+      <fieldset>
+        <legend>Chọn dữ liệu</legend>
+        <label class="inl"><input type="radio" name="mode" value="ship" checked> Theo Ship</label>
+        <label class="inl"><input type="radio" name="mode" value="code"> Theo Code (gồm cả code không có Ship)</label>
+        <input type="text" id="search" placeholder="Tìm trong danh sách...">
+        <div style="margin-top:6px">
+          <button id="btnAll" type="button">Chọn tất cả (đang hiện)</button>
+          <button id="btnNone" type="button">Bỏ chọn hết</button>
+          <button id="btnNoShip" type="button">Chọn code không có Ship</button>
+          <span id="selCount" class="muted"></span>
+        </div>
+        <div id="list" class="list"></div>
+        <div id="pasteBox" style="display:none">
+          <p class="muted">Hoặc dán nhiều code (cách nhau bằng dấu cách, phẩy hoặc xuống dòng):</p>
+          <textarea id="paste" rows="3"></textarea>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Sắp xếp</legend>
+        <label>Số dòng sản phẩm mỗi vùng: <input type="text" id="zone" value="25" style="width:70px"></label>
+        <div class="muted">Mỗi khách hàng nằm trọn trong 1 vùng; các vùng cách nhau 1 dòng trống.</div>
+        <label>Thứ tự sản phẩm:</label>
+        <input type="text" id="order" value="5kg, 2kg, 1kg, TF, 500g, Khay, Go">
+        <div class="muted">Sản phẩm khớp từ khoá nào đứng trước theo thứ tự này; không khớp thì xếp cuối theo A-Z.</div>
+      </fieldset>
+      <button id="btnRun" type="button" class="primary">Xử lý</button>
+    </section>
 
-<fieldset>
-  <legend>3. Sắp xếp</legend>
-  <label>Số dòng sản phẩm mỗi vùng: <input type="text" id="zone" value="25" style="width:60px"></label>
-  <div class="muted">Mỗi khách hàng nằm trọn trong 1 vùng; các vùng cách nhau 1 dòng trống. Thứ tự sản phẩm:</div>
-  <input type="text" id="order" value="5kg, 2kg, 1kg, TF, 500g, Khay, Go">
-  <div class="muted">Sản phẩm khớp từ khoá nào đứng trước theo thứ tự này; không khớp thì xếp cuối theo A-Z.</div>
-</fieldset>
+    <section class="panel" id="p-result">
+      <h2>Kết quả</h2>
+      <div class="card">
+        <div id="msg" class="muted">Chưa có kết quả. Vào "Chọn &amp; xử lý" và bấm Xử lý.</div>
+        <div style="margin-top:8px">
+          <label class="inl">Tên file: <input type="text" id="fname" style="width:240px"> .xlsx</label>
+          <button id="btnDl" type="button" class="primary" disabled>Tải xuống Excel</button>
+          <button type="button" data-go="p-form">Điền vào form báo cáo &rarr;</button>
+        </div>
+      </div>
+      <div id="out"></div>
+    </section>
 
-<button id="btnRun" type="button">Xử lý</button>
-<div style="margin:8px 0">
-  <label style="display:inline">Tên file: <input type="text" id="fname" style="width:260px"> .xlsx</label>
-  <button id="btnDl" type="button" disabled>Tải xuống Excel</button>
+    <section class="panel" id="p-form">
+      <h2>Điền form báo cáo</h2>
+      <p class="sub">Cần bấm Xử lý trước. Dữ liệu được điền vào form theo từng vùng, tự nhân bản vùng khi nhiều dữ liệu.</p>
+      <!-- Module điền form báo cáo (template-fill.js) — có thể gỡ bỏ độc lập -->
+      <div id="templateBox"></div>
+    </section>
+
+    <section class="panel" id="p-convert">
+      <h2>Chuyển CSV gốc</h2>
+      <p class="sub">Sửa lỗi font và lọc dữ liệu từ file CSV tải về, xuất ra .xlsx. (Không bắt buộc: các ô tải ở bước 1 cũng nhận thẳng file CSV.)</p>
+      <!-- Module chuyển CSV gốc (converter.js) — có thể gỡ bỏ độc lập -->
+      <div id="converterBox"></div>
+    </section>
+
+    <section class="panel" id="p-short">
+      <h2>Quy ước rút gọn</h2>
+      <p class="sub">Rút gọn tên khách hàng / điểm giao và tên sản phẩm. Sau khi nạp quy ước, bấm Xử lý lại để áp dụng.</p>
+      <fieldset>
+        <legend>Khách hàng &amp; điểm giao</legend>
+        <label>File quy ước (4 cột: tên khách gốc, điểm giao gốc, Khách hàng, Điểm giao):
+          <input type="file" id="fMap" accept=".xlsx"></label>
+        <button id="btnMap" type="button" disabled>Tải file mẫu quy ước rút gọn (từ dg1)</button>
+        <div id="mapMsg" class="muted"></div>
+      </fieldset>
+      <!-- Module rút gọn tên sản phẩm (product-short.js) — có thể gỡ bỏ độc lập -->
+      <div id="productShortBox"></div>
+    </section>
+  </main>
 </div>
-<div id="msg" class="muted"></div>
-<!-- Module điền form báo cáo (template-fill.js) — có thể gỡ bỏ độc lập -->
-<div id="templateBox"></div>
-<div id="out"></div>
 
 <script src="converter.js"></script>
 <script src="product-short.js"></script>
@@ -278,8 +361,8 @@ $('fMap').addEventListener('change', async e=>{
       const c = clean(row.getCell(3).text), p = clean(row.getCell(4).text);
       if(c || p) shortMap.set(k,{cus:c,point:p});
     });
-    $('msg').innerHTML = `<span class="ok">Đã nạp ${shortMap.size} dòng quy ước rút gọn.</span>`;
-  }catch(err){ $('msg').innerHTML = '<span class="err">Không đọc được file quy ước: '+err.message+'</span>'; }
+    $('mapMsg').innerHTML = `<span class="ok">Đã nạp ${shortMap.size} dòng quy ước. Bấm Xử lý lại để áp dụng.</span>`;
+  }catch(err){ $('mapMsg').innerHTML = '<span class="err">Không đọc được file quy ước: '+err.message+'</span>'; }
 });
 
 $('btnMap').onclick = async ()=>{
@@ -437,6 +520,29 @@ $('btnDl').onclick = async ()=>{
   if(!layout.length) return;
   download(await buildResult(), outName());
 };
+</script>
+<script>
+/* Điều hướng menu trái */
+(function(){
+  const $ = id => document.getElementById(id);
+  const links = Array.from(document.querySelectorAll('#nav a'));
+  function show(id){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id===id));
+    links.forEach(a=>a.classList.toggle('active', a.dataset.p===id));
+    $('side').classList.remove('open'); $('overlay').classList.remove('show');
+    window.scrollTo(0,0);
+  }
+  window.CPShowPanel = show;
+  links.forEach(a=>a.addEventListener('click',()=>show(a.dataset.p)));
+  document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.go)));
+  $('menuBtn').addEventListener('click',()=>{ $('side').classList.toggle('open'); $('overlay').classList.toggle('show'); });
+  $('overlay').addEventListener('click',()=>{ $('side').classList.remove('open'); $('overlay').classList.remove('show'); });
+  $('btnRun').addEventListener('click',()=>show('p-result'));   // xử lý xong -> sang trang Kết quả
+  const mark = (id,done)=>{ const a = links.find(x=>x.dataset.p===id); a.classList.toggle('done',done); a.firstChild.textContent = done ? '\u2713' : a.dataset.n; };
+  new MutationObserver(()=>{ const t = $('status').textContent; mark('p-upload', /dg1:/.test(t) && /Sản phẩm:/.test(t)); })
+    .observe($('status'),{childList:true,subtree:true,characterData:true});
+  new MutationObserver(()=>mark('p-result', !!$('out').querySelector('table'))).observe($('out'),{childList:true});
+})();
 </script>
 </body>
 </html>
