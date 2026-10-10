@@ -74,9 +74,12 @@
   <button id="btnDl" type="button" disabled>Tải xuống Excel</button>
 </div>
 <div id="msg" class="muted"></div>
+<!-- Module điền form báo cáo (template-fill.js) — có thể gỡ bỏ độc lập -->
+<div id="templateBox"></div>
 <div id="out"></div>
 
 <script src="converter.js"></script>
+<script src="template-fill.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let dgRows = [];          // {code, cus, point, ship}
@@ -352,6 +355,8 @@ $('btnRun').onclick = ()=>{
     cus: g.cus,
     products: [...g.prods.values()].sort((a,b)=>rank(a)-rank(b) || a.localeCompare(b,'vi'))
   }));
+
+  window.CPLastGroups = list;   // dữ liệu cho module điền form báo cáo
 
   // 2) xếp vào các vùng (first-fit): khách không bị tách giữa 2 vùng
   const zones = [];
