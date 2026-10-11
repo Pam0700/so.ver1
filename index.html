@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tra cứu sản phẩm theo Ship / Code</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+  :root{--bg:#f4f6f8;--card:#fff;--line:#e2e6ea;--ink:#1f2933;--muted:#667085;--acc:#2563eb;--accd:#1d4ed8;--side:#111827}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+  body{font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  .app{position:fixed;inset:0;display:flex;overflow:hidden}   /* khóa bố cục: khung cố định, chỉ vùng nội dung cuộn */
+  .side{width:230px;flex:0 0 230px;background:var(--side);color:#e5e7eb;height:100%;padding:16px 10px;overflow-y:auto;overscroll-behavior:contain}
+  .brand{font-weight:700;font-size:15px;color:#fff;padding:4px 10px 14px}
+  .side nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:#cbd5e1;cursor:pointer;margin-bottom:2px;user-select:none}
+  .side nav a:hover{background:#1f2937}
+  .side nav a.active{background:var(--acc);color:#fff}
+  .side nav .n{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:#374151;display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:#fff}
+  .side nav a.active .n{background:rgba(255,255,255,.28)}
+  .side nav a.done .n{background:#16a34a}
+  .side .sep{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;padding:14px 12px 6px}
+  main{flex:1;min-width:0;height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:22px 26px 40px}
+  main>section,main>.top{max-width:1040px}
+  .top{display:none}
+  .overlay{display:none}
+  .panel{display:none}.panel.active{display:block}
+  h2{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 16px}
+  fieldset,.card{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:14px 16px;margin:0 0 14px;min-width:0}
+  legend{font-weight:600;padding:0 6px}
+  label{display:block;margin:8px 0 4px}
+  label.inl{display:inline-block;margin:4px 8px 4px 0}
+  input[type=text],textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
+  input[type=file]{max-width:100%;margin-top:4px}
+  button{padding:8px 14px;border:1px solid #cfd4da;background:#fff;border-radius:6px;cursor:pointer;font:inherit;margin:4px 6px 4px 0}
+  button:hover{background:#f3f4f6}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary,#tfGo{background:var(--acc);border-color:var(--acc);color:#fff}
+  button.primary:hover,#tfGo:hover{background:var(--accd)}
+  .list{border:1px solid var(--line);border-radius:6px;height:min(48vh,360px);overflow:auto;padding:4px 10px;margin-top:8px;background:#fff}
+  .list label{font-size:13px;margin:3px 0}
+  .muted{color:var(--muted);font-size:13px}
+  .ok{color:#0a7a2f}.err{color:#b00020}
+  #out{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;margin-top:10px;font-size:13px;background:#fff}
+  th,td{border:1px solid #cfd4da;padding:5px 8px;vertical-align:top;text-align:left}
+  th{background:#eef0f3}
+  td.cus{white-space:pre-wrap;width:50%}
+  td.grp{border-top:2px solid #444}
+  @media (max-width:820px){
+    .side{position:fixed;left:0;top:0;bottom:0;z-index:30;transform:translateX(-100%);transition:transform .2s}
+    .side.open{transform:none}
+    .overlay.show{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:20}
+    .top{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);padding:8px 12px;margin:-22px -26px 16px}
+    .top button{margin:0;font-size:18px;padding:4px 12px}
+    main{padding:22px 14px 40px}
+    .top{margin:-22px -14px 16px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="overlay" id="overlay"></div>
+  <aside class="side" id="side">
+    <div class="brand">Tra cứu Ship / Code</div>
+    <nav id="nav">
+      <a data-p="p-upload" data-n="1" class="active"><span class="n">1</span>Tải dữ liệu</a>
+      <a data-p="p-select" data-n="2"><span class="n">2</span>Chọn &amp; xử lý</a>
+      <a data-p="p-result" data-n="3"><span class="n">3</span>Kết quả</a>
+      <a data-p="p-form" data-n="4"><span class="n">4</span>Điền form báo cáo</a>
+      <div class="sep">Công cụ</div>
+      <a data-p="p-convert" data-n="⇄"><span class="n">⇄</span>Chuyển CSV gốc</a>
+      <a data-p="p-short" data-n="Aa"><span class="n">Aa</span>Quy ước rút gọn</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="top"><button id="menuBtn" type="button" aria-label="Menu">&#9776;</button><strong>Tra cứu Ship / Code</strong></header>
+
+    <section class="panel active" id="p-upload">
+      <h2>Tải dữ liệu</h2>
+      <p class="sub">Tải file giao hàng (dg1) và file sản phẩm (50, 54...). Nhận file đã lọc (.xlsx) và cả file gốc lỗi font (.csv hoặc .xlsx).</p>
+      <div class="card">
+        <label>File dg1 (Code, Tên khách hàng, Điểm giao hàng, Ship):
+          <input type="file" id="fDg" accept=".xlsx,.csv"></label>
+        <label>File sản phẩm (chọn cùng lúc file 50, 54... được nhiều file):
+          <input type="file" id="fPr" accept=".xlsx,.csv" multiple></label>
+        <div id="status" class="muted" style="margin-top:8px"></div>
+      </div>
+      <button type="button" class="primary" data-go="p-select">Tiếp: Chọn &amp; xử lý &rarr;</button>
+    </section>
+
+    <section class="panel" id="p-select">
+      <h2>Chọn &amp; xử lý</h2>
+      <p class="sub">Chọn Ship hoặc Code cần lấy, đặt cách sắp xếp rồi bấm Xử lý.</p>
+      <fieldset>
+        <legend>Chọn dữ liệu</legend>
+        <label class="inl"><input type="radio" name="mode" value="ship" checked> Theo Ship</label>
+        <label class="inl"><input type="radio" name="mode" value="code"> Theo Code (gồm cả code không có Ship)</label>
+        <input type="text" id="search" placeholder="Tìm trong danh sách...">
+        <div style="margin-top:6px">
+          <button id="btnAll" type="button">Chọn tất cả (đang hiện)</button>
+          <button id="btnNone" type="button">Bỏ chọn hết</button>
+          <button id="btnNoShip" type="button">Chọn code không có Ship</button>
+          <span id="selCount" class="muted"></span>
+        </div>
+        <div id="list" class="list"></div>
+        <div id="pasteBox" style="display:none">
+          <p class="muted">Hoặc dán nhiều code (cách nhau bằng dấu cách, phẩy hoặc xuống dòng):</p>
+          <textarea id="paste" rows="3"></textarea>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Sắp xếp</legend>
+        <label>Số dòng sản phẩm mỗi vùng: <input type="text" id="zone" value="25" style="width:70px"></label>
+        <div class="muted">Mỗi khách hàng nằm trọn trong 1 vùng; các vùng cách nhau 1 dòng trống.</div>
+        <label>Thứ tự sản phẩm:</label>
+        <input type="text" id="order" value="5kg, 2kg, 1kg, TF, 500g, Khay, Go">
+        <div class="muted">Sản phẩm khớp từ khoá nào đứng trước theo thứ tự này; không khớp thì xếp cuối theo A-Z.</div>
+      </fieldset>
+      <button id="btnRun" type="button" class="primary">Xử lý</button>
+    </section>
+
+    <section class="panel" id="p-result">
+      <h2>Kết quả</h2>
+      <div class="card">
+        <div id="msg" class="muted">Chưa có kết quả. Vào "Chọn &amp; xử lý" và bấm Xử lý.</div>
+        <div style="margin-top:8px">
+          <label class="inl">Tên file: <input type="text" id="fname" style="width:240px"> .xlsx</label>
+          <button id="btnDl" type="button" class="primary" disabled>Tải xuống Excel</button>
+          <button type="button" data-go="p-form">Điền vào form báo cáo &rarr;</button>
+        </div>
+      </div>
+      <div id="out"></div>
+    </section>
+
+    <section class="panel" id="p-form">
+      <h2>Điền form báo cáo</h2>
+      <p class="sub">Cần bấm Xử lý trước. Dữ liệu được điền vào form theo từng vùng, tự nhân bản vùng khi nhiều dữ liệu.</p>
+      <!-- Module điền form báo cáo (template-fill.js) — có thể gỡ bỏ độc lập -->
+      <div id="templateBox"></div>
+    </section>
+
+    <section class="panel" id="p-convert">
+      <h2>Chuyển CSV gốc</h2>
+      <p class="sub">Sửa lỗi font và lọc dữ liệu từ file CSV tải về, xuất ra .xlsx. (Không bắt buộc: các ô tải ở bước 1 cũng nhận thẳng file CSV.)</p>
+      <!-- Module chuyển CSV gốc (converter.js) — có thể gỡ bỏ độc lập -->
+      <div id="converterBox"></div>
+    </section>
+
+    <section class="panel" id="p-short">
+      <h2>Quy ước rút gọn</h2>
+      <p class="sub">Rút gọn tên khách hàng / điểm giao và tên sản phẩm. Sau khi nạp quy ước, bấm Xử lý lại để áp dụng.</p>
+      <fieldset>
+        <legend>Khách hàng &amp; điểm giao</legend>
+        <label>File quy ước (4 cột: tên khách gốc, điểm giao gốc, Khách hàng, Điểm giao):
+          <input type="file" id="fMap" accept=".xlsx"></label>
+        <button id="btnMap" type="button" disabled>Tải file mẫu quy ước rút gọn (từ dg1)</button>
+        <div id="mapMsg" class="muted"></div>
+      </fieldset>
+      <!-- Module rút gọn tên sản phẩm (product-short.js) — có thể gỡ bỏ độc lập -->
+      <div id="productShortBox"></div>
+    </section>
+  </main>
+</div>
+
+<script src="converter.js"></script>
+<script src="product-short.js"></script>
+<script src="template-fill.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let dgRows = [];          // {code, cus, point, ship}
+let hasShip = false;
+let prodIdx = new Map();  // code -> [product names]
+let result = null;        // [{cus, products[]}]
+
+const esc = s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const clean = s => String(s ?? '').normalize('NFC').replace(/\s+/g,' ').trim();
+
+/* ---------- đọc file ---------- */
+async function readWb(file){
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  return wb;
+}
+function headerMap(ws){
+  const m = {};
+  ws.getRow(1).eachCell((c,i)=>{ m[clean(c.text).toLowerCase()] = i; });
+  return m;
+}
+
+function afterDg(){
+  if(!hasShip){
+    document.querySelector('input[value=code]').checked = true;
+    document.querySelector('input[value=ship]').disabled = true;
+  } else document.querySelector('input[value=ship]').disabled = false;
+  setStatus(); renderList();
+}
+$('fDg').addEventListener('change', async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  try{
+    let raw = null;                          // file gốc (CSV hoặc xlsx lỗi font) -> đọc trực tiếp
+    if(/\.csv$/i.test(f.name)){
+      if(!window.CPConverter) throw new Error('thiếu module converter.js');
+      raw = await CPConverter.readFile(f,'gd');
+      if(raw.type!=='gd') throw new Error('đây không phải file giao hàng (gd_...)');
+    }else if(window.CPConverter){
+      try{ const r = await CPConverter.readFile(f,'gd'); if(r.type==='gd') raw = r; }catch(e){ /* thử định dạng đã lọc */ }
+    }
+    if(raw){
+      dgRows = raw.rows.map(r=>({code:clean(r.code),cus:clean(r.cus),point:clean(r.point),ship:clean(r.ship)}));
+      hasShip = dgRows.some(r=>r.ship);
+      afterDg(); return;
+    }
+    const wb = await readWb(f);
+    let ws = wb.worksheets.find(w=>Object.keys(headerMap(w)).includes('code')) || wb.worksheets[0];
+    const h = headerMap(ws);
+    const find = (re,def)=>{ const k = Object.keys(h).find(x=>re.test(x)); return k ? h[k] : def; };
+    const cCode = find(/^code$/,1), cCus = find(/khách|khach/,2),
+          cPt = find(/điểm|diem/,3), cShip = find(/^ship$/,0);
+    hasShip = cShip > 0;
+    dgRows = [];
+    ws.eachRow((row,n)=>{
+      if(n===1) return;
+      const code = clean(row.getCell(cCode).text);
+      if(!code) return;
+      dgRows.push({
+        code,
+        cus: clean(row.getCell(cCus).text),
+        point: clean(row.getCell(cPt).text),
+        ship: hasShip ? clean(row.getCell(cShip).text) : ''
+      });
+    });
+    afterDg();
+  }catch(err){ $('status').innerHTML = '<span class="err">Không đọc được file dg1: '+err.message+'</span>'; }
+});
+
+let prodInfo = [];
+$('fPr').addEventListener('change', async e=>{
+  prodIdx = new Map(); prodInfo = [];
+  try{
+    for(const file of e.target.files){
+      if(/\.csv$/i.test(file.name)){        // CSV gốc (lỗi font) -> đọc trực tiếp
+        if(!window.CPConverter) throw new Error('thiếu module converter.js');
+        const res = await CPConverter.readFile(file); let m = 0;
+        if(res.type==='prod') res.rows.forEach(r=>{
+          const code = clean(r.code), name = clean(r.name);
+          if(!code || !name) return;
+          if(!prodIdx.has(code)) prodIdx.set(code, []);
+          prodIdx.get(code).push(name); m++;
+        });
+        prodInfo.push({name:file.name, n:m});
+        continue;
+      }
+      const wb = await readWb(file);
+      let n = 0;
+      for(const ws of wb.worksheets){
+        const a1 = clean(ws.getRow(1).getCell(1).text).toLowerCase();
+        const b1 = clean(ws.getRow(1).getCell(2).text).toLowerCase();
+        // chỉ nhận trang tính có tiêu đề: Code | Sản phẩm (loại file dg1: Code | Tên khách hàng)
+        if(a1 !== 'code' || !/s[aả]n ph[aẩ]m|product/.test(b1)) continue;
+        ws.eachRow((row,i)=>{
+          if(i===1) return;
+          const code = clean(row.getCell(1).text), name = clean(row.getCell(2).text);
+          if(!code || !name) return;
+          if(!prodIdx.has(code)) prodIdx.set(code, []);
+          prodIdx.get(code).push(name); n++;
+        });
+      }
+      if(!n && window.CPConverter){          // xlsx gốc (Code = SO, Sản phẩm = Ten sp, lỗi font) -> đọc trực tiếp
+        try{
+          const r = await CPConverter.readFile(file,'prod');
+          if(r.type==='prod') r.rows.forEach(x=>{
+            const code = clean(x.code), name = clean(x.name);
+            if(!code || !name) return;
+            if(!prodIdx.has(code)) prodIdx.set(code, []);
+            prodIdx.get(code).push(name); n++;
+          });
+        }catch(e){ /* bỏ qua */ }
+      }
+      prodInfo.push({name:file.name, n});
+    }
+    setStatus();
+  }catch(err){ $('status').innerHTML = '<span class="err">Không đọc được file sản phẩm: '+err.message+'</span>'; }
+});
+
+function setStatus(){
+  const p = [];
+  if(dgRows.length) p.push(`dg1: ${dgRows.length} dòng` + (hasShip ? '' : ' (không có cột Ship)'));
+  if(prodIdx.size) p.push(`Sản phẩm: ${prodIdx.size} code`);
+  let html = '<span class="ok">'+p.join(' | ')+'</span>';
+  prodInfo.forEach(x=>{
+    html += x.n ? `<br><span class="ok">${esc(x.name)}: ${x.n} dòng sản phẩm</span>`
+                : `<br><span class="err">${esc(x.name)}: bỏ qua — không có trang tính nào có tiêu đề "Code | Sản phẩm" (không phải file sản phẩm?)</span>`;
+  });
+  $('status').innerHTML = html;
+}
+
+/* ---------- danh sách chọn ---------- */
+const mode = () => document.querySelector('input[name=mode]:checked').value;
+const selected = new Set();
+
+function items(){
+  if(mode()==='ship'){
+    const m = new Map();
+    dgRows.forEach(r=>{ if(r.ship) m.set(r.ship,(m.get(r.ship)||0)+1); });
+    return [...m].sort((a,b)=>a[0].localeCompare(b[0])).map(([k,n])=>({key:k,label:`${k}  (${n} code)`}));
+  }
+  const seen = new Set(), out = [];
+  dgRows.forEach(r=>{ if(seen.has(r.code)) return; seen.add(r.code);
+    out.push({key:r.code,label:`${r.code} — ${r.cus}`}); });
+  return out;
+}
+function renderList(){
+  selected.clear();
+  $('pasteBox').style.display = mode()==='code' ? '' : 'none';
+  $('btnNoShip').style.display = mode()==='code' && hasShip ? '' : 'none';
+  const box = $('list'); box.innerHTML = '';
+  items().forEach(it=>{
+    const l = document.createElement('label');
+    const c = document.createElement('input'); c.type='checkbox'; c.value = it.key;
+    c.addEventListener('change',()=>{ c.checked ? selected.add(it.key) : selected.delete(it.key); count(); });
+    l.append(c, ' ', it.label); l.dataset.t = it.label.toLowerCase();
+    box.appendChild(l);
+  });
+  count();
+}
+function count(){ $('selCount').textContent = `Đã chọn: ${selected.size}`; }
+function visibleBoxes(){ return [...$('list').querySelectorAll('label')].filter(l=>l.style.display!=='none').map(l=>l.firstChild); }
+function setChecked(cb,v){ cb.checked=v; v ? selected.add(cb.value) : selected.delete(cb.value); }
+
+$('search').addEventListener('input',()=>{
+  const q = $('search').value.toLowerCase().trim();
+  $('list').querySelectorAll('label').forEach(l=>{ l.style.display = l.dataset.t.includes(q) ? '' : 'none'; });
+});
+$('btnAll').onclick = ()=>{ visibleBoxes().forEach(c=>setChecked(c,true)); count(); };
+$('btnNone').onclick = ()=>{ [...$('list').querySelectorAll('input')].forEach(c=>setChecked(c,false)); count(); };
+$('btnNoShip').onclick = ()=>{
+  const codes = new Set(dgRows.filter(r=>!r.ship).map(r=>r.code));
+  [...$('list').querySelectorAll('input')].forEach(c=>setChecked(c, codes.has(c.value))); count();
+};
+document.querySelectorAll('input[name=mode]').forEach(r=>r.addEventListener('change',renderList));
+
+/* ---------- sắp xếp sản phẩm ---------- */
+function norm(s){
+  return s.toLowerCase().replace(/(\d)\s*(kg|gr|g)\b/g,(m,d,u)=>d+(u==='gr'?'g':u));
+}
+function makeRank(orderStr){
+  const words = orderStr.split(/[,\n;]+/).map(x=>x.trim()).filter(Boolean);
+  const kws = words.map(k=>{
+    const n = norm(k).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return new RegExp('(?<![\\p{L}\\p{N}.,])'+n+'(?![\\p{L}\\p{N}])','u');
+  });
+  // tên có cả "500g" và "khay": xếp sau các nhóm đứng trước, trước nhóm chỉ có 500g / chỉ có khay
+  const iP = words.findIndex(w=>norm(w)==='500g'), iK = words.findIndex(w=>norm(w)==='khay');
+  const both = (iP>=0 && iK>=0) ? Math.min(iP,iK) - 0.5 : null;
+  return name => {
+    const n = norm(name);
+    const i = kws.findIndex(r=>r.test(n));
+    if(i<0) return kws.length;
+    if(both!==null && (i===iP || i===iK) && kws[iP].test(n) && kws[iK].test(n)) return both;
+    return i;
+  };
+}
+
+/* ---------- quy ước rút gọn ---------- */
+let shortMap = new Map();   // "khách||điểm" (thường) -> {cus, point}
+const mkKey = (c,p)=>(clean(c)+'||'+clean(p)).toLowerCase();
+
+$('fMap').addEventListener('change', async e=>{
+  shortMap = new Map();
+  const f = e.target.files[0]; if(!f) return;
+  try{
+    const ws = (await readWb(f)).worksheets[0];
+    ws.eachRow((row,n)=>{
+      if(n===1) return;
+      const k = mkKey(row.getCell(1).text,row.getCell(2).text);
+      const c = clean(row.getCell(3).text), p = clean(row.getCell(4).text);
+      if(c || p) shortMap.set(k,{cus:c,point:p});
+    });
+    $('mapMsg').innerHTML = `<span class="ok">Đã nạp ${shortMap.size} dòng quy ước. Bấm Xử lý lại để áp dụng.</span>`;
+  }catch(err){ $('mapMsg').innerHTML = '<span class="err">Không đọc được file quy ước: '+err.message+'</span>'; }
+});
+
+$('btnMap').onclick = async ()=>{
+  const seen = new Set(), pairs = [];
+  dgRows.forEach(r=>{ const k=mkKey(r.cus,r.point); if(seen.has(k)) return; seen.add(k); pairs.push(r); });
+  const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Quy ước');
+  ws.columns = [{width:45},{width:50},{width:35},{width:35}];
+  const h = ws.addRow(['Tên khách hàng (gốc)','Điểm giao (gốc)','Khách hàng','Điểm giao']);
+  h.font = {bold:true};
+  const thin = {style:'thin'}, box = {top:thin,bottom:thin,left:thin,right:thin};
+  h.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}}; c.border=box; });
+  pairs.forEach(r=>{
+    const row = ws.addRow([r.cus, r.point, '', '']);
+    row.eachCell({includeEmpty:true},(c,i)=>{
+      c.alignment={wrapText:true,vertical:'top'}; c.border=box;
+      if(i>=3) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF9DB'}};
+    });
+  });
+  ws.views = [{state:'frozen',ySplit:1}];
+  download(await wb.xlsx.writeBuffer(),'quy_uoc_rut_gon.xlsx');
+};
+function download(buf,name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+// bật nút mẫu khi đã có dg1
+const _setStatus = setStatus;
+setStatus = function(){ _setStatus(); $('btnMap').disabled = !dgRows.length; };
+
+/* ---------- xử lý ---------- */
+// danh sách tên sản phẩm gốc (đã bỏ VietGap) cho module quy ước rút gọn sản phẩm
+window.CPGetProducts = ()=>{
+  const s = new Map();
+  prodIdx.forEach(arr=>arr.forEach(p=>{ const n = stripVG(clean(p)); if(n) s.set(n.toLowerCase(),n); }));
+  return [...s.values()].sort((a,b)=>a.localeCompare(b,'vi'));
+};
+const stripVG = s => s.replace(/viet\s*gap/gi,'').replace(/\(\s*\)/g,'').replace(/\s+/g,' ')
+                      .replace(/\s+([,)])/g,'$1').replace(/[\s,\-–]+$/,'').trim();
+let fnameDirty = false;
+$('fname').addEventListener('input',()=>{ fnameDirty = true; });
+const outName = ()=>{
+  const n = $('fname').value.replace(/\.xlsx$/i,'').replace(/[\\/:*?"<>|]/g,'').trim() || 'ket_qua';
+  return n + '.xlsx';
+};
+let layout = [];   // dòng hiển thị: {cus, p, first, blank}
+
+$('btnRun').onclick = ()=>{
+  $('msg').textContent=''; $('out').innerHTML=''; $('btnDl').disabled = true; layout = [];
+  if(!dgRows.length) return $('msg').innerHTML='<span class="err">Chưa tải file dg1.</span>';
+  if(!prodIdx.size)  return $('msg').innerHTML='<span class="err">Chưa tải file sản phẩm.</span>';
+  const limit = Math.max(1, parseInt($('zone').value) || 25);
+
+  let rows, warn = '';
+  if(mode()==='ship'){
+    rows = dgRows.filter(r=>selected.has(r.ship));
+  }else{
+    const codes = new Set(selected);
+    $('paste').value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean).forEach(c=>codes.add(c));
+    rows = dgRows.filter(r=>codes.has(r.code));
+    const missing = [...codes].filter(c=>!dgRows.some(r=>r.code===c));
+    if(missing.length) warn += `<span class="err">Code không có trong dg1: ${missing.join(', ')}. </span>`;
+  }
+  if(!rows.length) return $('msg').innerHTML = warn + '<span class="err">Chưa chọn dữ liệu nào.</span>';
+
+  // 1) gom theo khách + điểm giao (dùng tên rút gọn nếu có quy ước)
+  const rank = makeRank($('order').value);
+  const groups = new Map(), noProd = new Set();
+  rows.forEach(r=>{
+    const m = shortMap.get(mkKey(r.cus,r.point));
+    const cus = (m && m.cus) || r.cus, point = (m && m.point) || r.point;
+    const key = (cus+'||'+point).toLowerCase();
+    if(!groups.has(key)) groups.set(key,{cus:cus + (point ? '\n'+point : ''), prods:new Map()});
+    const prods = prodIdx.get(r.code);
+    if(!prods) noProd.add(r.code);
+    (prods||[]).forEach(p=>{
+      const orig = stripVG(p);
+      if(!orig) return;
+      // tên hiển thị = tên rút gọn (nếu có quy ước); thứ tự sắp xếp vẫn tính theo tên gốc
+      const name = window.CPProductShort ? CPProductShort.shorten(orig) : orig, k = name.toLowerCase();
+      const rk = rank(orig), cur = groups.get(key).prods.get(k);
+      if(!cur) groups.get(key).prods.set(k,{name, rk});
+      else if(rk < cur.rk) cur.rk = rk;
+    });
+  });
+  const list = [...groups.values()].map(g=>({
+    cus: g.cus,
+    products: [...g.prods.values()].sort((a,b)=>a.rk-b.rk || a.name.localeCompare(b.name,'vi')).map(x=>x.name)
+  }));
+
+  window.CPLastGroups = list;   // dữ liệu cho module điền form báo cáo
+
+  // 2) xếp vào các vùng (first-fit): khách không bị tách giữa 2 vùng
+  const zones = [];
+  list.forEach(g=>{
+    const size = Math.max(1,g.products.length);
+    let z = zones.find(z=>z.used+size<=limit);
+    if(!z){ z = {used:0,groups:[]}; zones.push(z); }
+    z.groups.push(g); z.used += size;
+  });
+
+  // 3) dàn thành các dòng, chèn 1 dòng trống giữa các vùng
+  zones.forEach((z,zi)=>{
+    if(zi>0) layout.push({blank:true});
+    z.groups.forEach(g=>{
+      const ps = g.products.length ? g.products : [''];
+      ps.forEach((p,i)=>layout.push({cus: i===0 ? g.cus : '', p, first: i===0}));
+    });
+  });
+
+  let html = '<table><tr><th>Khách hàng</th><th>Sản phẩm</th></tr>';
+  layout.forEach(r=>{
+    html += r.blank ? '<tr><td colspan="2" style="background:#ffd966;height:10px;padding:0"></td></tr>'
+      : '<tr>' + (r.first ? `<td class="cus grp">${esc(r.cus)}</td>` : '<td class="cus"></td>')
+        + `<td${r.first?' class="grp"':''}>${esc(r.p)}</td></tr>`;
+  });
+  $('out').innerHTML = html + '</table>';
+  const over = zones.filter(z=>z.used>limit).length;
+  $('msg').innerHTML = warn + `<span class="ok">${list.length} khách/điểm giao, ${zones.length} vùng.</span>`
+    + (over ? ` <span class="err">${over} vùng vượt ${limit} dòng vì 1 khách có quá nhiều sản phẩm (không tách khách).</span>` : '')
+    + (noProd.size ? ` <span class="err">Code không có sản phẩm: ${[...noProd].join(', ')}</span>` : '');
+  if(!fnameDirty) $('fname').value = mode()==='ship' ? 'ket_qua_theo_ship' : 'ket_qua_theo_code';
+  $('btnDl').disabled = false;
+};
+
+/* ---------- xuất Excel ---------- */
+async function buildResult(){
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Kết quả');
+  ws.columns = [{width:55},{width:50}];
+  const thin = {style:'thin'};
+  const head = ws.addRow(['Khách hàng','Sản phẩm']);
+  head.font = {bold:true};
+  head.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}};
+    c.border={top:thin,bottom:thin,left:thin,right:thin}; });
+  layout.forEach(x=>{
+    if(x.blank){
+      const sep = ws.addRow(['','']);
+      sep.height = 10;
+      [1,2].forEach(i=>{ sep.getCell(i).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFFD966'}}; });
+      return;
+    }
+    const r = ws.addRow([x.cus, x.p]);
+    r.eachCell({includeEmpty:true},c=>{
+      c.alignment = {wrapText:true, vertical:'top'};
+      c.border = {left:thin,right:thin,bottom:thin,top: x.first ? thin : undefined};
+    });
+    const lines = x.first ? x.cus.split('\n').reduce((n,l)=>n+Math.max(1,Math.ceil(l.length/50)),0) : 1;
+    const h = Math.max(lines, Math.ceil(x.p.length/45), 1) * 15;
+    if(h>15) r.height = h;
+  });
+  return await wb.xlsx.writeBuffer();
+}
+$('btnDl').onclick = async ()=>{
+  if(!layout.length) return;
+  download(await buildResult(), outName());
+};
+</script>
+<script>
+/* Điều hướng menu trái */
+(function(){
+  const $ = id => document.getElementById(id);
+  const links = Array.from(document.querySelectorAll('#nav a'));
+  function show(id){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id===id));
+    links.forEach(a=>a.classList.toggle('active', a.dataset.p===id));
+    $('side').classList.remove('open'); $('overlay').classList.remove('show');
+    const m = document.querySelector('main'); if(m) m.scrollTop = 0;
+  }
+  window.CPShowPanel = show;
+  links.forEach(a=>a.addEventListener('click',()=>show(a.dataset.p)));
+  document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.go)));
+  $('menuBtn').addEventListener('click',()=>{ $('side').classList.toggle('open'); $('overlay').classList.toggle('show'); });
+  $('overlay').addEventListener('click',()=>{ $('side').classList.remove('open'); $('overlay').classList.remove('show'); });
+  $('btnRun').addEventListener('click',()=>show('p-result'));   // xử lý xong -> sang trang Kết quả
+  const mark = (id,done)=>{ const a = links.find(x=>x.dataset.p===id); a.classList.toggle('done',done); a.firstChild.textContent = done ? '\u2713' : a.dataset.n; };
+  new MutationObserver(()=>{ const t = $('status').textContent; mark('p-upload', /dg1:/.test(t) && /Sản phẩm:/.test(t)); })
+    .observe($('status'),{childList:true,subtree:true,characterData:true});
+  new MutationObserver(()=>mark('p-result', !!$('out').querySelector('table'))).observe($('out'),{childList:true});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+/*
+ * template-fill.js — Module độc lập: điền dữ liệu đã xử lý vào form báo cáo (.xlsx).
+ *
+ * Quy tắc:
+ *  - Tự dò các vùng trong form: mỗi vùng bắt đầu từ ô tiêu đề "Khách hàng" / "Sản phẩm",
+ *    vùng dữ liệu kéo dài đến dòng "Ghi chú:" (không cố định cứng số dòng).
+ *  - Vùng 1 được nới lên đủ số dòng dữ liệu bằng vùng dài nhất (vd. 23 -> 25 dòng).
+ *  - Điền theo thứ tự: vùng 1, vùng 2 (giữ nguyên), rồi nhân bản vùng cuối thành vùng 3, 4...
+ *  - Khách nằm trọn trong 1 vùng. Khách quá số dòng của vùng thì sản phẩm thứ 26 trở đi
+ *    sang vùng kế tiếp, tên khách được ghi lại ở dòng đầu.
+ *  - Cột Khách hàng: ghi 1 lần ở dòng đầu, gộp ô theo số sản phẩm. Cột Sản phẩm: thu nhỏ chữ vừa ô.
+ *
+ * Cách gắn vào trang: thêm một thẻ div có id="templateBox" và nạp file này bằng thẻ script (src).
+ * Dữ liệu lấy từ biến window.CPLastGroups = [{cus: "tên\nđiểm giao", products: [...]}, ...]
+ * (trang chính gán sau khi bấm Xử lý). Cần ExcelJS đã nạp sẵn.
+ */
+(function (root) {
+  'use strict';
+
+  /* ---------- tiện ích ---------- */
+  const clone = function (o) { return o == null ? o : JSON.parse(JSON.stringify(o)); };
+  function textOf(v) {
+    if (v == null) return '';
+    if (typeof v === 'object') {
+      if (v.richText) return v.richText.map(function (t) { return t.text; }).join('');
+      if (v.text != null) return String(v.text);
+      if (v.result != null) return String(v.result);
+      return '';
+    }
+    return String(v);
+  }
+  const lc = function (s) { return String(s).normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase(); };
+  function colNum(s) { let n = 0; for (const ch of s) n = n * 26 + ch.charCodeAt(0) - 64; return n; }
+  function colLetter(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+  function decodeRange(a) {
+    const m = /^\$?([A-Z]+)\$?(\d+)(?::\$?([A-Z]+)\$?(\d+))?$/.exec(String(a));
+    if (!m) return null;
+    return { left: colNum(m[1]), top: +m[2], right: colNum(m[3] || m[1]), bottom: +(m[4] || m[2]) };
+  }
+
+  /* ---------- 1. xếp dữ liệu vào các vùng ---------- */
+  function planZones(groups, cap) {
+    const zones = []; let splits = 0, segCount = 0;
+    groups.forEach(function (g) {
+      const ps = (g.products || []).slice();
+      const chunks = [];
+      if (ps.length <= cap) chunks.push(ps);
+      else { for (let i = 0; i < ps.length; i += cap) chunks.push(ps.slice(i, i + cap)); splits++; }
+      let minZone = 0;                       // phần tiếp theo của 1 khách luôn nằm ở vùng sau phần trước
+      chunks.forEach(function (chunk) {
+        const n = Math.max(1, chunk.length);
+        let zi = -1;
+        for (let i = minZone; i < zones.length; i++) { if (zones[i].used + n <= cap) { zi = i; break; } }
+        if (zi < 0) { zones.push({ used: 0, segments: [] }); zi = zones.length - 1; }
+        zones[zi].segments.push({ cus: g.cus, products: chunk });
+        zones[zi].used += n; minZone = zi + 1; segCount++;
+      });
+    });
+    return { zones: zones, splits: splits, segCount: segCount };
+  }
+
+  /* ---------- 2. dò các vùng trong form ---------- */
+  function detectBlocks(ws) {
+    const merges = ((ws.model && ws.model.merges) || []).map(decodeRange).filter(Boolean);
+    const last = Math.min(ws.rowCount || 0, 600), MAXC = 30;
+    const heads = [];
+    for (let r = 1; r <= last; r++) {
+      const row = ws.getRow(r); let cu = 0, pr = 0;
+      for (let c = 1; c <= MAXC; c++) {
+        const t = lc(textOf(row.getCell(c).value));
+        if (!cu && /^kh[aá]ch\s*h[aà]ng/.test(t)) cu = c;
+        else if (!pr && /^s[aả]n\s*ph[aẩ]m/.test(t)) pr = c;
+      }
+      if (cu && pr) {
+        const m = merges.find(function (x) { return x.left <= cu && x.right >= cu && x.top <= r && x.bottom >= r; });
+        const bottom = m ? m.bottom : r;
+        heads.push({ top: r, cu: cu, pr: pr, dataStart: bottom + 1 });
+        r = bottom;
+      }
+    }
+    heads.forEach(function (h, i) {
+      h.footer = 0;
+      for (let r = h.dataStart; r <= last; r++) {
+        if (i + 1 < heads.length && r >= heads[i + 1].top) break;
+        if (/^ghi\s*ch[uú]/.test(lc(textOf(ws.getRow(r).getCell(1).value)))) { h.footer = r; break; }
+      }
+    });
+    const blocks = heads.filter(function (h) { return h.footer > h.dataStart; });
+    blocks.forEach(function (b) { b.dataEnd = b.footer - 1; b.rows = b.dataEnd - b.dataStart + 1; });
+
+    const breaks = (ws.rowBreaks || []).map(function (b) { return b.id; }).sort(function (a, b) { return a - b; });
+    const pa = /\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)/.exec((ws.pageSetup && ws.pageSetup.printArea) || '');
+    const printEnd = pa ? +pa[4] : 0, printCols = pa ? colNum(pa[3]) : 24;
+    blocks.forEach(function (b, i) {
+      if (i === 0) b.start = 1;
+      else {
+        const prev = blocks[i - 1];
+        const br = breaks.find(function (id) { return id >= prev.footer && id < b.top; });
+        b.start = br ? br + 1 : Math.max(prev.footer + 1, b.top - (blocks[0].top - 1));
+      }
+    });
+    blocks.forEach(function (b, i) {
+      b.end = i + 1 < blocks.length ? blocks[i + 1].start - 1 : Math.max(printEnd, b.footer + 1);
+    });
+    return { blocks: blocks, merges: merges, printCols: printCols };
+  }
+
+  // các đoạn dòng cần sao chép của 1 vùng; nới vùng ngắn lên đủ `cap` dòng dữ liệu
+  function blockPlan(b, cap) {
+    const parts = []; let d = 0;
+    const add = function (a, z) { parts.push({ a: a, z: z, d: d }); d += z - a + 1; };
+    add(b.start, b.dataStart - 1);
+    const dataOffset = d;
+    const extra = cap - b.rows;
+    if (extra > 0) {
+      const styleRow = b.rows > 1 ? b.dataEnd - 1 : b.dataEnd;   // giữ nguyên dòng cuối (viền cuối) ở cuối vùng
+      if (b.rows > 1) add(b.dataStart, b.dataEnd - 1);
+      for (let k = 0; k < extra; k++) add(styleRow, styleRow);
+      add(b.dataEnd, b.dataEnd);
+    } else add(b.dataStart, b.dataEnd);
+    add(b.footer, b.end);
+    return { parts: parts, dataOffset: dataOffset, total: d };
+  }
+
+  function fitFont(text, widthChars, heightPt) {
+    for (let sz = 11; sz >= 6; sz -= 0.5) {
+      const per = Math.max(1, Math.floor(widthChars * 1.05 * 11 / sz));
+      let lines = 0;
+      text.split('\n').forEach(function (p) { lines += Math.max(1, Math.ceil(p.length / per)); });
+      if (lines * sz * 1.3 <= heightPt - 2) return sz;
+    }
+    return 6;
+  }
+
+  /* ---------- 3. điền vào workbook đã nạp ---------- */
+  function fillWorkbook(wb, groups, opts) {
+    opts = opts || {};
+    const VT = root.ExcelJS.ValueType;
+    // chọn trang tính: theo tên nếu có, không thì trang có nhiều vùng nhất
+    let ws = null, det = null;
+    wb.worksheets.forEach(function (s) {
+      if (opts.sheetName && s.name !== opts.sheetName) return;
+      let d; try { d = detectBlocks(s); } catch (e) { return; }
+      if (d.blocks.length && (!det || d.blocks.length > det.blocks.length)) { ws = s; det = d; }
+    });
+    if (!ws) throw new Error('Không tìm thấy vùng có tiêu đề "Khách hàng" / "Sản phẩm" và dòng "Ghi chú:" trong form' +
+                             (opts.sheetName ? ' (trang tính "' + opts.sheetName + '")' : '') + '.');
+    const blocks = det.blocks, first = blocks[0], tail = blocks[blocks.length - 1];
+    const cap = Math.max.apply(null, blocks.map(function (b) { return b.rows; }));
+    const plan1 = blockPlan(first, cap), planK = blockPlan(tail, cap);
+    const planned = planZones(groups, cap);
+    const nZones = Math.max(1, planned.zones.length);
+    const maxCol = det.printCols || 24;
+
+    // trang tính mới (tránh spliceRows làm lệch ô gộp)
+    const oldName = ws.name;
+    const out = wb.addWorksheet('__tmp_form__', {
+      properties: clone(ws.properties) || undefined,
+      pageSetup: clone(ws.pageSetup) || undefined,
+      headerFooter: clone(ws.headerFooter) || undefined,
+      views: clone(ws.views) || undefined
+    });
+    for (let c = 1; c <= Math.max(maxCol, ws.columnCount || 0); c++) {
+      const sc = ws.getColumn(c), dc = out.getColumn(c);
+      if (sc.width) dc.width = sc.width;
+      if (sc.hidden) dc.hidden = true;
+    }
+
+    const styleOps = [], mergeSet = {}, mergeList = [];
+    const zoneInfo = [];
+    let base = 1;
+    for (let z = 0; z < nZones; z++) {
+      const tpl = z === 0 ? first : tail, plan = z === 0 ? plan1 : planK;
+      plan.parts.forEach(function (p) {
+        for (let s = p.a; s <= p.z; s++) {
+          const dst = base + p.d + (s - p.a);
+          const sr = ws.getRow(s), dr = out.getRow(dst);
+          if (sr.height) dr.height = sr.height;
+          if (sr.hidden) dr.hidden = true;
+          for (let c = 1; c <= maxCol; c++) {
+            const sc = sr.getCell(c), dc = dr.getCell(c);
+            if (sc.type !== VT.Merge) { const v = sc.value; if (v != null) dc.value = (typeof v === 'object' && !(v instanceof Date)) ? clone(v) : v; }
+            styleOps.push([dc, sc.style]);
+          }
+        }
+        det.merges.forEach(function (m) {
+          if (m.top >= p.a && m.bottom <= p.z && m.right <= maxCol) {
+            const t = base + p.d + (m.top - p.a), b = base + p.d + (m.bottom - p.a);
+            const key = t + ':' + m.left + ':' + b + ':' + m.right;
+            if (!mergeSet[key]) { mergeSet[key] = 1; mergeList.push([t, m.left, b, m.right]); }
+          }
+        });
+      });
+      zoneInfo.push({ base: base, dataStart: base + plan.dataOffset, end: base + plan.total - 1, cu: tpl.cu, pr: tpl.pr });
+      if (z < nZones - 1) out.getRow(base + plan.total - 1).addPageBreak();
+      base += plan.total;
+    }
+    mergeList.forEach(function (m) { out.mergeCells(m[0], m[1], m[2], m[3]); });
+    styleOps.forEach(function (op) { op[0].style = clone(op[1]); });   // gán style sau khi gộp ô
+
+    // ghi dữ liệu
+    planned.zones.forEach(function (zone, z) {
+      const zi = zoneInfo[z]; let r = zi.dataStart;
+      zone.segments.forEach(function (seg) {
+        const n = Math.max(1, seg.products.length);
+        const parts = String(seg.cus || '').split('\n');
+        const name = parts.shift() || '', point = parts.join(' ');
+        const text = [name, point].filter(Boolean).join(n > 1 ? '\n' : ' - ');
+        if (n > 1) out.mergeCells(r, zi.cu, r + n - 1, zi.cu);
+        const top = out.getRow(r).getCell(zi.cu);
+        let h = 0; for (let i = 0; i < n; i++) h += out.getRow(r + i).height || 15;
+        top.value = text;
+        top.alignment = Object.assign({}, top.alignment, { horizontal: 'center', vertical: 'middle', wrapText: n > 1, shrinkToFit: n === 1 });
+        top.font = Object.assign({}, top.font, { size: fitFont(text, out.getColumn(zi.cu).width || 17, h) });
+        seg.products.forEach(function (p, i) {
+          const c = out.getRow(r + i).getCell(zi.pr);
+          c.value = p;
+          c.alignment = Object.assign({}, c.alignment, { vertical: 'middle', wrapText: false, shrinkToFit: true });
+        });
+        r += n;
+      });
+    });
+
+    out.pageSetup.printArea = 'A1:' + colLetter(maxCol) + (base - 1);
+
+    // bỏ trang tính cũ (và các trang tính khác nếu được chọn), đặt lại tên
+    wb.removeWorksheet(ws.id);
+    if (opts.onlyReport) wb.worksheets.slice().forEach(function (s) { if (s !== out) wb.removeWorksheet(s.id); });
+    out.name = oldName;
+    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1 };
+  }
+
+  /* ---------- 4. giao diện ---------- */
+  function initUI() {
+    const box = document.getElementById('templateBox');
+    if (!box) return;
+    box.innerHTML =
+      '<fieldset><legend>Điền vào form báo cáo</legend>' +
+      '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>' +
+      '<label>Tên trang tính (để trống = tự nhận): <input type="text" id="tfSheet" style="width:220px"></label>' +
+      '<label><input type="checkbox" id="tfOnly" checked> Chỉ giữ trang tính báo cáo (bỏ các trang tính khác)</label>' +
+      '<label>Tên file: <input type="text" id="tfName" value="bao_cao_xuat_hang" style="width:240px"> .xlsx</label>' +
+      '<button id="tfGo" type="button">Điền vào form &amp; tải xuống</button>' +
+      '<div id="tfMsg" class="muted"></div></fieldset>';
+    const $q = function (id) { return box.querySelector(id); };
+    const msg = function (t, cls) { const m = $q('#tfMsg'); m.textContent = t; m.className = cls || 'muted'; };
+
+    $q('#tfGo').onclick = async function () {
+      const groups = root.CPLastGroups;
+      if (!groups || !groups.length) return msg('Hãy bấm "Xử lý" ở trên trước (cần có dữ liệu kết quả).', 'err');
+      const f = $q('#tfFile').files[0];
+      if (!f) return msg('Chưa chọn file form báo cáo.', 'err');
+      try {
+        msg('Đang xử lý...');
+        const wb = new root.ExcelJS.Workbook();
+        await wb.xlsx.load(await f.arrayBuffer());
+        const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked });
+        const buf = await wb.xlsx.writeBuffer();
+        const name = ($q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao') + '.xlsx';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        a.download = name; a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        msg('Đã điền ' + groups.length + ' khách vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
+            (info.splits ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
+      } catch (e) { msg('Lỗi: ' + e.message, 'err'); }
+    };
+  }
+
+  const api = { planZones: planZones, detectBlocks: detectBlocks, blockPlan: blockPlan, fillWorkbook: fillWorkbook, fitFont: fitFont, initUI: initUI };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.CPTemplateFill = api;
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI);
+    else initUI();
+  }
+})(typeof window !== 'undefined' ? window : globalThis);
