@@ -24,6 +24,17 @@
   }
   function size() { return map.size; }
 
+  // Nạp quy ước từ nguồn khác (vd. hệ thống): rows = [[tên gốc, tên rút gọn], ...]
+  function setRules(rows) {
+    const next = new Map();
+    (rows || []).forEach(function (r) {
+      const orig = clean(r[0]), short = clean(r[1]);
+      if (orig && short) next.set(keyOf(orig), { orig: orig, short: short });
+    });
+    map = next;
+    return map.size;
+  }
+
   async function loadMap(file) {
     const wb = new root.ExcelJS.Workbook();
     await wb.xlsx.load(await file.arrayBuffer());
@@ -95,7 +106,7 @@
     };
   }
 
-  const api = { shorten: shorten, size: size, loadMap: loadMap, buildTemplate: buildTemplate, initUI: initUI };
+  const api = { shorten: shorten, size: size, setRules: setRules, loadMap: loadMap, buildTemplate: buildTemplate, initUI: initUI };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CPProductShort = api;
   if (typeof document !== 'undefined') {

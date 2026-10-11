@@ -236,7 +236,9 @@
     if (!box) return;
     box.innerHTML =
       '<fieldset><legend>Điền vào form báo cáo</legend>' +
-      '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>' +
+      (typeof root.CPFormProvider === 'function'
+        ? '<label>Form báo cáo: dùng form lưu sẵn trên hệ thống. Hoặc chọn form khác (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>'
+        : '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>') +
       '<label>Tên trang tính (để trống = tự nhận): <input type="text" id="tfSheet" style="width:220px"></label>' +
       '<label><input type="checkbox" id="tfOnly" checked> Chỉ giữ trang tính báo cáo (bỏ các trang tính khác)</label>' +
       '<label>Tên file: <input type="text" id="tfName" value="bao_cao_xuat_hang" style="width:240px"> .xlsx</label>' +
@@ -249,11 +251,15 @@
       const groups = root.CPLastGroups;
       if (!groups || !groups.length) return msg('Hãy bấm "Xử lý" ở trên trước (cần có dữ liệu kết quả).', 'err');
       const f = $q('#tfFile').files[0];
-      if (!f) return msg('Chưa chọn file form báo cáo.', 'err');
       try {
         msg('Đang xử lý...');
+        let formBuf = null;
+        if (f) formBuf = await f.arrayBuffer();
+        else if (typeof root.CPFormProvider === 'function') formBuf = await root.CPFormProvider();   // form lưu sẵn (Drive)
+        if (!formBuf) return msg(typeof root.CPFormProvider === 'function'
+          ? 'Hệ thống chưa có form báo cáo. Hãy chọn file form hoặc nhờ admin tải form lên.' : 'Chưa chọn file form báo cáo.', 'err');
         const wb = new root.ExcelJS.Workbook();
-        await wb.xlsx.load(await f.arrayBuffer());
+        await wb.xlsx.load(formBuf);
         const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked });
         const buf = await wb.xlsx.writeBuffer();
         const name = ($q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao') + '.xlsx';
