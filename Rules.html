@@ -1,0 +1,57 @@
+<script>
+/*
+ * Rules.html — Module (mọi người dùng): tự nạp quy ước rút gọn và form báo cáo lưu trên hệ thống.
+ *  - Quy ước khách hàng/điểm giao -> window.CPSetCusRules(rows)   (trang chính)
+ *  - Quy ước sản phẩm            -> CPProductShort.setRules(rows) (product-short.js)
+ *  - Form báo cáo (Drive)        -> window.CPFormProvider()       (template-fill.js dùng khi không chọn file)
+ * Cũng cung cấp window.CPGas(tênHàm, ...tham số) để gọi hàm phía server bằng Promise.
+ */
+(function () {
+  'use strict';
+  const gs = function (name) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (res, rej) {
+      const run = google.script.run
+        .withSuccessHandler(res)
+        .withFailureHandler(function (e) { rej(new Error((e && e.message) || String(e))); });
+      run[name].apply(run, args);
+    });
+  };
+  window.CPGas = gs;
+
+  const $ = function (id) { return document.getElementById(id); };
+  const setMsg = function (html) { const m = $('sysRulesMsg'); if (m) m.innerHTML = html; };
+
+  async function loadRules() {
+    setMsg('<span class="muted">Đang tải quy ước từ hệ thống...</span>');
+    try {
+      const r = await gs('getRules');
+      if (window.CPSetCusRules) window.CPSetCusRules(r.kh);
+      if (window.CPProductShort) window.CPProductShort.setRules(r.sp);
+      setMsg('<span class="ok">Quy ước hệ thống: ' + r.kh.length + ' khách/điểm giao, ' + r.sp.length +
+             ' sản phẩm đã rút gọn. Bấm Xử lý lại để áp dụng.</span>');
+    } catch (e) {
+      setMsg('<span class="err">Không tải được quy ước: ' + String(e.message).replace(/</g, '&lt;') + '</span>');
+    }
+  }
+  window.CPReloadRules = loadRules;
+
+  // form báo cáo lưu trong Drive (lấy 1 lần, nhớ trong bộ nhớ)
+  let formCache = null;
+  window.CPFormProvider = async function () {
+    if (!formCache) {
+      const f = await gs('getForm');
+      if (!f) return null;
+      const bin = atob(f.b64), u = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      formCache = { name: f.name, buf: u.buffer };
+    }
+    return formCache.buf;
+  };
+  window.CPResetFormCache = function () { formCache = null; };
+
+  const reload = $('btnReloadRules');
+  if (reload) reload.addEventListener('click', loadRules);
+  loadRules();
+})();
+</script>

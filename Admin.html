@@ -1,0 +1,334 @@
+<style>
+  .tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .tabs .tab.active{background:var(--acc);border-color:var(--acc);color:#fff}
+  .tblwrap{overflow:auto;max-height:62vh;border:1px solid var(--line);border-radius:6px;margin-top:8px;background:#fff}
+  #admTbl{margin:0;min-width:680px}
+  #admTbl th{position:sticky;top:0;z-index:1}
+  #admTbl td{padding:2px}
+  #admTbl td.ix{width:48px;text-align:right;color:#888;padding:2px 6px}
+  #admTbl input{width:100%;padding:5px 6px;font-size:13px;border:1px solid transparent;background:transparent;border-radius:4px}
+  #admTbl input:focus{border-color:var(--acc);background:#fff;outline:none}
+  #admTbl td.org input{color:#555}
+  #admTbl tr.blank td{background:#fffbe6}
+  #admTbl button{padding:2px 8px;margin:0}
+  .admPager{margin-top:6px}
+  .admPw{max-width:260px;display:inline-block;width:auto}
+</style>
+<script>
+/*
+ * Admin.html — Module quản trị (chỉ nạp khi mở link ...?page=admin).
+ *  - Menu "Quản trị": Quản lý quy ước, Form báo cáo (Drive)
+ *  - Nút "Cập nhật" trong trang Quy ước rút gọn: thêm mục mới xuống cuối danh sách quy ước
+ *  - Đăng nhập bằng mật khẩu (ADMIN_PASSWORD trong Thuộc tính tập lệnh), phiên 6 giờ
+ */
+(function () {
+  'use strict';
+  const $ = function (id) { return document.getElementById(id); };
+  const gs = window.CPGas;
+  const esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
+  const norm = function (s) { return String(s == null ? '' : s).normalize('NFC').replace(/\s+/g, ' ').trim(); };
+  const PAGE = 100;
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const COLS = {
+    kh: { n: 4, head: ['Tên khách hàng (gốc)', 'Điểm giao (gốc)', 'Khách hàng (rút gọn)', 'Điểm giao (rút gọn)'], org: [0, 1], key: [0, 1], short: [2, 3],
+          xl: ['Tên khách hàng (gốc)', 'Điểm giao (gốc)', 'Khách hàng', 'Điểm giao'], file: 'quy_uoc_khach_hang.xlsx' },
+    sp: { n: 2, head: ['Sản phẩm (gốc)', 'Sản phẩm (rút gọn)'], org: [0], key: [0], short: [1],
+          xl: ['Sản phẩm (gốc)', 'Sản phẩm rút gọn'], file: 'quy_uoc_san_pham.xlsx' }
+  };
+
+  let token = null;
+  try { token = localStorage.getItem('cp_adm_token'); } catch (e) { /* trình duyệt chặn lưu */ }
+  const store = function (t) {
+    token = t;
+    try { t ? localStorage.setItem('cp_adm_token', t) : localStorage.removeItem('cp_adm_token'); } catch (e) { /* bỏ qua */ }
+  };
+  const st = { cur: 'kh', data: { kh: [], sp: [] }, ver: { kh: 0, sp: 0 }, dirty: { kh: false, sp: false }, page: 0, authed: false, links: null };
+
+  // gọi hàm admin kèm token; hết phiên thì quay lại màn đăng nhập
+  async function adm(name) {
+    const args = [name, token].concat(Array.prototype.slice.call(arguments, 1));
+    try { return await gs.apply(null, args); }
+    catch (e) { if (/hết hạn/.test(e.message)) { store(null); setAuthed(false); } throw e; }
+  }
+
+  /* ---------- 1. dựng giao diện ---------- */
+  document.querySelector('.brand').textContent += ' · Admin';
+  $('nav').insertAdjacentHTML('beforeend',
+    '<div class="sep">Quản trị</div>' +
+    '<a data-p="p-adm-rules" data-n="&#9998;"><span class="n">&#9998;</span>Quản lý quy ước</a>' +
+    '<a data-p="p-adm-form" data-n="&#9636;"><span class="n">&#9636;</span>Form báo cáo (Drive)</a>');
+
+  const gate = '<div class="admGate card"></div>';
+  document.querySelector('main').insertAdjacentHTML('beforeend',
+    '<section class="panel" id="p-adm-rules"><h2>Quản lý quy ước rút gọn</h2>' +
+    '<p class="sub">Sửa tên rút gọn khách hàng / điểm giao và sản phẩm. Dữ liệu lưu trong Google Sheet, mọi người dùng tự nhận.</p>' + gate +
+    '<div class="admBody" style="display:none"><div class="card">' +
+      '<div class="tabs"><button type="button" class="tab active" data-k="kh">Khách hàng &amp; điểm giao</button>' +
+      '<button type="button" class="tab" data-k="sp">Sản phẩm</button></div>' +
+      '<input type="text" id="admSearch" placeholder="Tìm trong bảng...">' +
+      '<label class="inl"><input type="checkbox" id="admOnlyBlank"> Chỉ dòng chưa rút gọn</label>' +
+      '<div style="margin-top:4px">' +
+        '<button type="button" class="primary" id="admSave">Lưu</button>' +
+        '<button type="button" id="admReload">Tải lại</button>' +
+        '<button type="button" id="admAdd">Thêm dòng</button>' +
+        '<button type="button" id="admImp">Nhập từ Excel</button>' +
+        '<button type="button" id="admExp">Tải về Excel</button>' +
+        '<a id="admSheetLink" target="_blank" style="margin-left:8px">Mở Google Sheet</a>' +
+        '<input type="file" id="admImpFile" accept=".xlsx" style="display:none">' +
+      '</div>' +
+      '<div id="admInfo" class="muted" style="margin-top:6px"></div>' +
+      '<div id="admMsg" style="margin-top:4px"></div>' +
+      '<div class="tblwrap"><table id="admTbl"></table></div>' +
+      '<div class="admPager" id="admPager"></div>' +
+    '</div></div></section>' +
+
+    '<section class="panel" id="p-adm-form"><h2>Form báo cáo (Drive)</h2>' +
+    '<p class="sub">Form lưu trong Google Drive, trang tự dùng khi điền form báo cáo. Chỉ giữ 1 form hiện hành; tải form mới sẽ thay thế form cũ.</p>' + gate +
+    '<div class="admBody" style="display:none"><div class="card">' +
+      '<div id="admFormInfo" class="muted"></div>' +
+      '<label>Tải form mới (.xlsx): <input type="file" id="admFormFile" accept=".xlsx"></label>' +
+      '<button type="button" class="primary" id="admFormUp">Lưu vào Drive</button>' +
+      '<button type="button" id="admFormDl">Tải form hiện tại về</button>' +
+      '<a id="admFolderLink" target="_blank" style="margin-left:8px">Mở thư mục Drive</a>' +
+      '<div id="admFormMsg" style="margin-top:6px"></div>' +
+    '</div></div></section>');
+
+  // nút "Cập nhật" trong trang Quy ước rút gọn (chỉ có ở trang admin)
+  document.querySelector('#p-short .sub').insertAdjacentHTML('afterend',
+    '<div class="card" id="admUpdateCard"><b>Cập nhật quy ước (admin)</b>' +
+    '<div class="muted" style="margin:4px 0 8px">Lấy khách / điểm giao và sản phẩm từ các file đang tải ở bước 1, ' +
+    'thêm những mục <b>chưa có</b> vào <b>cuối</b> danh sách quy ước (cột rút gọn để trống). Mục đã có được giữ nguyên.</div>' +
+    '<button type="button" class="primary" id="btnAdmUpdate">Cập nhật</button>' +
+    '<button type="button" data-go="p-adm-rules" id="btnAdmGoRules">Mở Quản lý quy ước &rarr;</button>' +
+    '<div id="admUpdateMsg" style="margin-top:6px"></div></div>');
+  $('btnAdmGoRules').addEventListener('click', function () { window.CPShowPanel('p-adm-rules'); });
+
+  const say = function (id, text, cls) { const e = $(id); e.textContent = text; e.className = cls || 'muted'; };
+
+  /* ---------- 2. đăng nhập ---------- */
+  function setAuthed(ok) {
+    st.authed = ok;
+    document.querySelectorAll('.admGate').forEach(function (g) {
+      g.style.display = ok ? 'none' : '';
+      if (!ok) g.innerHTML = '<b>Đăng nhập admin</b><p class="muted">Nhập mật khẩu admin (đặt trong Cài đặt dự án &rarr; Thuộc tính tập lệnh: <code>ADMIN_PASSWORD</code>).</p>' +
+        '<input type="password" class="admPw" placeholder="Mật khẩu"> <button type="button" class="primary admLogin">Đăng nhập</button>' +
+        '<div class="admLoginMsg err" style="margin-top:6px"></div>';
+    });
+    document.querySelectorAll('.admBody').forEach(function (b) { b.style.display = ok ? '' : 'none'; });
+  }
+  async function login(g) {
+    const pw = g.querySelector('.admPw').value, m = g.querySelector('.admLoginMsg');
+    m.textContent = 'Đang kiểm tra...';
+    try {
+      store(await gs('adminLogin', pw));
+      setAuthed(true);
+      await loadAll();
+    } catch (e) { m.textContent = e.message; }
+  }
+  document.querySelector('main').addEventListener('click', function (e) {
+    const b = e.target.closest('.admLogin'); if (b) login(b.closest('.admGate'));
+  });
+  document.querySelector('main').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.classList.contains('admPw')) login(e.target.closest('.admGate'));
+  });
+
+  /* ---------- 3. bảng quy ước ---------- */
+  const blankRow = function (k, r) { return COLS[k].short.every(function (c) { return !norm(r[c]); }); };
+  function view() {
+    const k = st.cur, q = norm($('admSearch').value).toLowerCase(), only = $('admOnlyBlank').checked, idx = [];
+    st.data[k].forEach(function (r, i) {
+      if (only && !blankRow(k, r)) return;
+      if (q && r.join(' ').toLowerCase().indexOf(q) < 0) return;
+      idx.push(i);
+    });
+    return idx;
+  }
+  function render() {
+    const k = st.cur, c = COLS[k], rows = st.data[k], idx = view();
+    const pages = Math.max(1, Math.ceil(idx.length / PAGE));
+    st.page = Math.min(st.page, pages - 1);
+    let h = '<tr><th>#</th>' + c.head.map(function (x) { return '<th>' + esc(x) + '</th>'; }).join('') + '<th></th></tr>';
+    idx.slice(st.page * PAGE, (st.page + 1) * PAGE).forEach(function (i) {
+      const r = rows[i];
+      h += '<tr class="' + (blankRow(k, r) ? 'blank' : '') + '"><td class="ix">' + (i + 1) + '</td>';
+      for (let j = 0; j < c.n; j++) {
+        h += '<td class="' + (c.org.indexOf(j) >= 0 ? 'org' : '') + '"><input data-i="' + i + '" data-c="' + j + '" value="' + esc(r[j]) + '"></td>';
+      }
+      h += '<td><button type="button" data-del="' + i + '" title="Xoá dòng">&#10005;</button></td></tr>';
+    });
+    $('admTbl').innerHTML = h;
+    const blanks = rows.filter(function (r) { return blankRow(k, r); }).length;
+    say('admInfo', 'Tổng ' + rows.length + ' dòng · chưa rút gọn ' + blanks + ' · đang hiện ' + idx.length +
+        (st.dirty[k] ? ' · CÓ THAY ĐỔI CHƯA LƯU' : ''), st.dirty[k] ? 'err' : 'muted');
+    $('admPager').innerHTML = pages > 1
+      ? '<button type="button" data-pg="-1"' + (st.page === 0 ? ' disabled' : '') + '>&lsaquo; Trước</button> Trang ' + (st.page + 1) + '/' + pages +
+        ' <button type="button" data-pg="1"' + (st.page >= pages - 1 ? ' disabled' : '') + '>Sau &rsaquo;</button>' : '';
+    document.querySelectorAll('#p-adm-rules .tab').forEach(function (t) { t.classList.toggle('active', t.dataset.k === k); });
+  }
+
+  $('admTbl').addEventListener('input', function (e) {
+    const t = e.target; if (t.dataset.i == null) return;
+    const k = st.cur; st.data[k][+t.dataset.i][+t.dataset.c] = t.value; st.dirty[k] = true;
+    t.closest('tr').classList.toggle('blank', blankRow(k, st.data[k][+t.dataset.i]));
+    say('admInfo', 'CÓ THAY ĐỔI CHƯA LƯU (bấm Lưu)', 'err');
+  });
+  $('admTbl').addEventListener('click', function (e) {
+    const b = e.target.closest('[data-del]'); if (!b) return;
+    st.data[st.cur].splice(+b.dataset.del, 1); st.dirty[st.cur] = true; render();
+  });
+  $('admPager').addEventListener('click', function (e) {
+    const b = e.target.closest('[data-pg]'); if (b) { st.page += +b.dataset.pg; render(); }
+  });
+  document.querySelectorAll('#p-adm-rules .tab').forEach(function (t) {
+    t.addEventListener('click', function () { st.cur = t.dataset.k; st.page = 0; $('admMsg').textContent = ''; render(); });
+  });
+  $('admSearch').addEventListener('input', function () { st.page = 0; render(); });
+  $('admOnlyBlank').addEventListener('change', function () { st.page = 0; render(); });
+
+  $('admAdd').addEventListener('click', function () {
+    const k = st.cur; st.data[k].push(new Array(COLS[k].n).fill('')); st.dirty[k] = true;
+    $('admSearch').value = ''; $('admOnlyBlank').checked = false;
+    st.page = Math.ceil(st.data[k].length / PAGE) - 1; render();
+    const ins = $('admTbl').querySelectorAll('input'); if (ins.length) ins[ins.length - COLS[k].n].focus();
+  });
+
+  $('admSave').addEventListener('click', async function () {
+    const k = st.cur; say('admMsg', 'Đang lưu...');
+    try {
+      const r = await adm('adminSaveRules', k, st.data[k], st.ver[k]);
+      st.ver[k] = r.ver; st.dirty[k] = false;
+      st.data[k] = st.data[k].map(function (row) { return row.map(norm); })
+        .filter(function (row) { return COLS[k].key.some(function (c) { return row[c]; }); });
+      render(); say('admMsg', 'Đã lưu ' + r.count + ' dòng.', 'ok');
+      if (window.CPReloadRules) window.CPReloadRules();
+    } catch (e) { say('admMsg', e.message, 'err'); }
+  });
+
+  let reloadArmed = false;
+  $('admReload').addEventListener('click', async function () {
+    if ((st.dirty.kh || st.dirty.sp) && !reloadArmed) {
+      reloadArmed = true; $('admReload').textContent = 'Bấm lần nữa để bỏ thay đổi';
+      setTimeout(function () { reloadArmed = false; $('admReload').textContent = 'Tải lại'; }, 4000); return;
+    }
+    reloadArmed = false; $('admReload').textContent = 'Tải lại';
+    try { await loadRulesData(); say('admMsg', 'Đã tải lại từ Google Sheet.', 'ok'); } catch (e) { say('admMsg', e.message, 'err'); }
+  });
+
+  // nhập từ Excel: gộp vào bảng (khớp theo tên gốc; mục mới thêm xuống cuối), sau đó bấm Lưu
+  $('admImp').addEventListener('click', function () { $('admImpFile').click(); });
+  $('admImpFile').addEventListener('change', async function (e) {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    const k = st.cur, c = COLS[k];
+    try {
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await f.arrayBuffer());
+      const ws = wb.worksheets[0];
+      const keyOf = function (r) { return c.key.map(function (i) { return norm(r[i]).toLowerCase(); }).join('||'); };
+      const pos = {}; st.data[k].forEach(function (r, i) { pos[keyOf(r)] = i; });
+      let add = 0, upd = 0;
+      ws.eachRow(function (row, n) {
+        if (n === 1) return;
+        const r = []; for (let j = 1; j <= c.n; j++) r.push(norm(row.getCell(j).text));
+        if (!c.key.some(function (i) { return r[i]; })) return;
+        const kk = keyOf(r);
+        if (kk in pos) {
+          const cur = st.data[k][pos[kk]];
+          c.short.forEach(function (j) { if (r[j] && r[j] !== cur[j]) { cur[j] = r[j]; upd++; } });
+        } else { pos[kk] = st.data[k].length; st.data[k].push(r); add++; }
+      });
+      st.dirty[k] = true; render();
+      say('admMsg', 'Đã nhập từ Excel: ' + add + ' dòng mới, ' + upd + ' ô rút gọn được cập nhật. Bấm Lưu để ghi vào hệ thống.', 'ok');
+    } catch (err) { say('admMsg', 'Không đọc được file: ' + err.message, 'err'); }
+  });
+
+  $('admExp').addEventListener('click', async function () {
+    const k = st.cur, c = COLS[k];
+    const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Quy ước');
+    ws.columns = c.xl.map(function (h, i) { return { width: i < c.org.length ? 45 : 35 }; });
+    ws.addRow(c.xl).font = { bold: true };
+    st.data[k].forEach(function (r) { ws.addRow(r); });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    save(await wb.xlsx.writeBuffer(), c.file);
+  });
+  function save(buf, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: XLSX_MIME })); a.download = name; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  async function loadRulesData() {
+    const r = await adm('adminGetRules');
+    st.data = { kh: r.kh, sp: r.sp }; st.ver = r.ver; st.dirty = { kh: false, sp: false }; render();
+  }
+
+  /* ---------- 4. form báo cáo ---------- */
+  const fmtSize = function (n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; };
+  function showFormInfo(f) {
+    $('admFormInfo').textContent = f ? 'Form hiện tại: ' + f.name + ' (' + fmtSize(f.size) + ', cập nhật ' + new Date(f.updated).toLocaleString('vi-VN') + ')'
+                                     : 'Chưa có form báo cáo trên hệ thống.';
+  }
+  $('admFormUp').addEventListener('click', async function () {
+    const f = $('admFormFile').files[0];
+    if (!f) return say('admFormMsg', 'Chưa chọn file form (.xlsx).', 'err');
+    if (f.size > 20 * 1048576) return say('admFormMsg', 'File quá lớn (tối đa 20 MB).', 'err');
+    say('admFormMsg', 'Đang kiểm tra và tải lên...');
+    try {
+      const buf = await f.arrayBuffer();
+      let warn = '';
+      try {   // cảnh báo nếu không dò được vùng Khách hàng / Sản phẩm
+        if (window.CPTemplateFill) {
+          const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf.slice(0));
+          if (!wb.worksheets.some(function (w) { try { return CPTemplateFill.detectBlocks(w).blocks.length > 0; } catch (e) { return false; } })) {
+            warn = ' Cảnh báo: chưa dò thấy vùng có tiêu đề "Khách hàng / Sản phẩm" và dòng "Ghi chú:" trong form này.';
+          }
+        }
+      } catch (e) { /* bỏ qua bước kiểm tra */ }
+      const bytes = new Uint8Array(buf); let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      const info = await adm('adminUploadForm', btoa(bin), f.name);
+      if (window.CPResetFormCache) window.CPResetFormCache();
+      showFormInfo(info); $('admFormFile').value = '';
+      say('admFormMsg', 'Đã lưu form vào Drive.' + warn, warn ? 'err' : 'ok');
+    } catch (e) { say('admFormMsg', e.message, 'err'); }
+  });
+  $('admFormDl').addEventListener('click', async function () {
+    try {
+      const f = await gs('getForm'); if (!f) return say('admFormMsg', 'Chưa có form trên hệ thống.', 'err');
+      const bin = atob(f.b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      save(u, f.name);
+    } catch (e) { say('admFormMsg', e.message, 'err'); }
+  });
+
+  /* ---------- 5. nút Cập nhật ---------- */
+  $('btnAdmUpdate').addEventListener('click', async function () {
+    const m = 'admUpdateMsg';
+    if (!st.authed) { say(m, 'Hãy đăng nhập admin trước (mục Quản lý quy ước).', 'err'); return window.CPShowPanel('p-adm-rules'); }
+    const cus = window.CPGetCustomers ? window.CPGetCustomers() : [];
+    const prod = window.CPGetProducts ? window.CPGetProducts() : [];
+    if (!cus.length && !prod.length) return say(m, 'Chưa có dữ liệu. Hãy tải file dg1 và file sản phẩm ở bước 1 trước.', 'err');
+    say(m, 'Đang cập nhật...');
+    try {
+      const a = cus.length ? await adm('adminAppendNew', 'kh', cus) : { added: 0 };
+      const b = prod.length ? await adm('adminAppendNew', 'sp', prod) : { added: 0 };
+      say(m, 'Đã thêm ' + a.added + ' khách/điểm giao mới và ' + b.added + ' sản phẩm mới vào cuối danh sách' +
+             (a.added + b.added ? '. Mở "Quản lý quy ước" (lọc "chỉ dòng chưa rút gọn") để điền tên rút gọn.' : ' (không có mục mới).'), 'ok');
+      await loadRulesData();
+    } catch (e) { say(m, e.message, 'err'); }
+  });
+
+  /* ---------- 6. khởi động ---------- */
+  async function loadAll() {
+    await loadRulesData();
+    try { showFormInfo(await adm('adminFormInfo')); } catch (e) { /* hiển thị sau */ }
+    try { st.links = await adm('adminLinks'); $('admSheetLink').href = st.links.sheet; $('admFolderLink').href = st.links.folder; } catch (e) { /* bỏ qua */ }
+  }
+  setAuthed(false);
+  (async function () {
+    if (token) {
+      let ok = false; try { ok = await gs('adminCheck', token); } catch (e) { /* bỏ qua */ }
+      if (ok) { setAuthed(true); try { await loadAll(); } catch (e) { say('admMsg', e.message, 'err'); } return; }
+      store(null);
+    }
+    window.CPShowPanel('p-adm-rules');   // chưa đăng nhập: mở màn đăng nhập
+  })();
+})();
+</script>
