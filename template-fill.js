@@ -9,6 +9,7 @@
  *  - Khách nằm trọn trong 1 vùng. Khách quá số dòng của vùng thì sản phẩm thứ 26 trở đi
  *    sang vùng kế tiếp, tên khách được ghi lại ở dòng đầu.
  *  - Cột Khách hàng: ghi 1 lần ở dòng đầu, gộp ô theo số sản phẩm. Cột Sản phẩm: thu nhỏ chữ vừa ô.
+ *  - Tên file (opts.title) được ghi vào ô J của dòng thứ 4 mỗi vùng có dữ liệu: J4, J43, J81, ...
  *
  * Cách gắn vào trang: thêm một thẻ div có id="templateBox" và nạp file này bằng thẻ script (src).
  * Dữ liệu lấy từ biến window.CPLastGroups = [{cus: "tên\nđiểm giao", products: [...]}, ...]
@@ -221,13 +222,27 @@
       });
     });
 
+    // ghi tên file vào ô J (dòng thứ 4 của mỗi vùng có dữ liệu): J4, J43, J81, ...
+    const titleCells = [];
+    if (opts.title) {
+      const tRow = opts.titleRow || 4, tCol = opts.titleCol || 10;
+      planned.zones.forEach(function (zone, z) {
+        const r = zoneInfo[z].base + tRow - 1, ref = out.getRow(r).getCell(1).font || {};
+        const cell = out.getRow(r).getCell(tCol);
+        cell.value = opts.title;
+        cell.font = { name: ref.name || 'Times New Roman', size: ref.size || 16, bold: true };
+        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
+        titleCells.push(colLetter(tCol) + r);
+      });
+    }
+
     out.pageSetup.printArea = 'A1:' + colLetter(maxCol) + (base - 1);
 
     // bỏ trang tính cũ (và các trang tính khác nếu được chọn), đặt lại tên
     wb.removeWorksheet(ws.id);
     if (opts.onlyReport) wb.worksheets.slice().forEach(function (s) { if (s !== out) wb.removeWorksheet(s.id); });
     out.name = oldName;
-    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1 };
+    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells };
   }
 
   /* ---------- 4. giao diện ---------- */
@@ -236,10 +251,13 @@
     if (!box) return;
     box.innerHTML =
       '<fieldset><legend>Điền vào form báo cáo</legend>' +
-      '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>' +
+      (typeof root.CPFormProvider === 'function'
+        ? '<label>Form báo cáo: dùng form lưu sẵn trên hệ thống. Hoặc chọn form khác (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>'
+        : '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>') +
       '<label>Tên trang tính (để trống = tự nhận): <input type="text" id="tfSheet" style="width:220px"></label>' +
       '<label><input type="checkbox" id="tfOnly" checked> Chỉ giữ trang tính báo cáo (bỏ các trang tính khác)</label>' +
       '<label>Tên file: <input type="text" id="tfName" value="bao_cao_xuat_hang" style="width:240px"> .xlsx</label>' +
+      '<label><input type="checkbox" id="tfTitle" checked> Ghi tên file vào ô J4, J43, J81... (mỗi vùng có dữ liệu)</label>' +
       '<button id="tfGo" type="button">Điền vào form &amp; tải xuống</button>' +
       '<div id="tfMsg" class="muted"></div></fieldset>';
     const $q = function (id) { return box.querySelector(id); };
@@ -249,19 +267,26 @@
       const groups = root.CPLastGroups;
       if (!groups || !groups.length) return msg('Hãy bấm "Xử lý" ở trên trước (cần có dữ liệu kết quả).', 'err');
       const f = $q('#tfFile').files[0];
-      if (!f) return msg('Chưa chọn file form báo cáo.', 'err');
       try {
         msg('Đang xử lý...');
+        let formBuf = null;
+        if (f) formBuf = await f.arrayBuffer();
+        else if (typeof root.CPFormProvider === 'function') formBuf = await root.CPFormProvider();   // form lưu sẵn (Drive)
+        if (!formBuf) return msg(typeof root.CPFormProvider === 'function'
+          ? 'Hệ thống chưa có form báo cáo. Hãy chọn file form hoặc nhờ admin tải form lên.' : 'Chưa chọn file form báo cáo.', 'err');
         const wb = new root.ExcelJS.Workbook();
-        await wb.xlsx.load(await f.arrayBuffer());
-        const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked });
+        await wb.xlsx.load(formBuf);
+        const base = $q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao';
+        const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked,
+                                                title: $q('#tfTitle').checked ? base : '' });
         const buf = await wb.xlsx.writeBuffer();
-        const name = ($q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao') + '.xlsx';
+        const name = base + '.xlsx';
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
         a.download = name; a.click();
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
         msg('Đã điền ' + groups.length + ' khách vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
+            (info.titleCells.length ? ' Tên file đã ghi vào ô ' + info.titleCells.join(', ') + '.' : '') +
             (info.splits ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
       } catch (e) { msg('Lỗi: ' + e.message, 'err'); }
     };
