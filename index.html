@@ -154,7 +154,7 @@
       <p class="sub">Rút gọn tên khách hàng / điểm giao và tên sản phẩm. Sau khi nạp quy ước, bấm Xử lý lại để áp dụng.</p>
       <fieldset>
         <legend>Khách hàng &amp; điểm giao</legend>
-        <label>File quy ước (4 cột: tên khách gốc, điểm giao gốc, Khách hàng, Điểm giao):
+        <label>File quy ước (3 cột: tên khách gốc, điểm giao gốc, Khách hàng rút gọn):
           <input type="file" id="fMap" accept=".xlsx"></label>
         <button id="btnMap" type="button" disabled>Tải file mẫu quy ước rút gọn (từ dg1)</button>
         <div id="mapMsg" class="muted"></div>
@@ -365,7 +365,7 @@ function makeRank(orderStr){
 }
 
 /* ---------- quy ước rút gọn ---------- */
-let shortMap = new Map();   // "khách||điểm" (thường) -> {cus, point}
+let shortMap = new Map();   // "khách||điểm" (thường) -> {cus}  (cus = tên rút gọn gộp cả điểm giao)
 const mkKey = (c,p)=>(clean(c)+'||'+clean(p)).toLowerCase();
 
 $('fMap').addEventListener('change', async e=>{
@@ -376,8 +376,8 @@ $('fMap').addEventListener('change', async e=>{
     ws.eachRow((row,n)=>{
       if(n===1) return;
       const k = mkKey(row.getCell(1).text,row.getCell(2).text);
-      const c = clean(row.getCell(3).text), p = clean(row.getCell(4).text);
-      if(c || p) shortMap.set(k,{cus:c,point:p});
+      const c = clean(row.getCell(3).text);
+      if(c) shortMap.set(k,{cus:c});
     });
     $('mapMsg').innerHTML = `<span class="ok">Đã nạp ${shortMap.size} dòng quy ước. Bấm Xử lý lại để áp dụng.</span>`;
   }catch(err){ $('mapMsg').innerHTML = '<span class="err">Không đọc được file quy ước: '+err.message+'</span>'; }
@@ -387,16 +387,17 @@ $('btnMap').onclick = async ()=>{
   const seen = new Set(), pairs = [];
   dgRows.forEach(r=>{ const k=mkKey(r.cus,r.point); if(seen.has(k)) return; seen.add(k); pairs.push(r); });
   const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Quy ước');
-  ws.columns = [{width:45},{width:50},{width:35},{width:35}];
-  const h = ws.addRow(['Tên khách hàng (gốc)','Điểm giao (gốc)','Khách hàng','Điểm giao']);
+  ws.columns = [{width:45},{width:50},{width:45}];
+  const h = ws.addRow(['Tên khách hàng (gốc)','Điểm giao (gốc)','Khách hàng']);
   h.font = {bold:true};
   const thin = {style:'thin'}, box = {top:thin,bottom:thin,left:thin,right:thin};
   h.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}}; c.border=box; });
   pairs.forEach(r=>{
-    const row = ws.addRow([r.cus, r.point, '', '']);
+    const m = shortMap.get(mkKey(r.cus,r.point));
+    const row = ws.addRow([r.cus, r.point, (m && m.cus) || '']);
     row.eachCell({includeEmpty:true},(c,i)=>{
       c.alignment={wrapText:true,vertical:'top'}; c.border=box;
-      if(i>=3) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF9DB'}};
+      if(i===3) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF9DB'}};
     });
   });
   ws.views = [{state:'frozen',ySplit:1}];
@@ -451,7 +452,8 @@ $('btnRun').onclick = ()=>{
   const groups = new Map(), noProd = new Set();
   rows.forEach(r=>{
     const m = shortMap.get(mkKey(r.cus,r.point));
-    const cus = (m && m.cus) || r.cus, point = (m && m.point) || r.point;
+    // có quy ước: chỉ dùng tên khách rút gọn (không còn điểm giao); chưa có: giữ tên gốc + điểm giao
+    const cus = (m && m.cus) || r.cus, point = (m && m.cus) ? '' : r.point;
     const key = (cus+'||'+point).toLowerCase();
     if(!groups.has(key)) groups.set(key,{cus:cus + (point ? '\n'+point : ''), prods:new Map()});
     const prods = prodIdx.get(r.code);
