@@ -230,7 +230,7 @@
         const r = zoneInfo[z].base + tRow - 1, ref = out.getRow(r).getCell(1).font || {};
         const cell = out.getRow(r).getCell(tCol);
         cell.value = opts.title;
-        cell.font = { name: ref.name || 'Times New Roman', size: ref.size || 16, bold: true };
+        cell.font = { name: ref.name || 'Times New Roman', size: ref.size || 10, bold: true };
         cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
         titleCells.push(colLetter(tCol) + r);
       });
