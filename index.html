@@ -40,6 +40,11 @@
   button.primary:hover,#tfGo:hover{background:var(--accd)}
   .list{border:1px solid var(--line);border-radius:6px;height:min(48vh,360px);overflow:auto;padding:4px 10px;margin-top:8px;background:#fff}
   .list label{font-size:13px;margin:3px 0}
+  .selgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .selcol{min-width:0}
+  .selcol .list{height:min(42vh,320px)}
+  .list label .pt{display:block;color:#667085;font-size:12px;margin-left:22px}
+  .selbtns{margin-top:6px}
   .muted{color:var(--muted);font-size:13px}
   .ok{color:#0a7a2f}.err{color:#b00020}
   #out{overflow-x:auto}
@@ -49,6 +54,7 @@
   td.cus{white-space:pre-wrap;width:50%}
   td.grp{border-top:2px solid #444}
   @media (max-width:820px){
+    .selgrid{grid-template-columns:1fr}
     .side{position:fixed;left:0;top:0;bottom:0;z-index:30;transform:translateX(-100%);transition:transform .2s}
     .side.open{transform:none}
     .overlay.show{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:20}
@@ -93,26 +99,39 @@
 
     <section class="panel" id="p-select">
       <h2>Chọn &amp; xử lý</h2>
-      <p class="sub">Chọn Ship hoặc Code cần lấy, đặt cách sắp xếp rồi bấm Xử lý.</p>
+      <p class="sub">Chọn Ship và/hoặc Code cần lấy (chọn đồng thời cả hai cũng được), đặt cách sắp xếp rồi bấm Xử lý.</p>
       <fieldset>
-        <legend>Chọn dữ liệu</legend>
-        <label class="inl"><input type="radio" name="mode" value="ship" checked> Theo Ship</label>
-        <label class="inl"><input type="radio" name="mode" value="code"> Theo Code (gồm cả code không có Ship)</label>
-        <input type="text" id="search" placeholder="Tìm trong danh sách...">
-        <div style="margin-top:6px">
-          <button id="btnAll" type="button">Chọn tất cả (đang hiện)</button>
-          <button id="btnNone" type="button">Bỏ chọn hết</button>
-          <button id="btnNoShip" type="button">Chọn code không có Ship</button>
-          <span id="selCount" class="muted"></span>
+        <legend>Chọn dữ liệu (chọn đồng thời cả Ship và Code)</legend>
+        <div class="selgrid">
+          <div class="selcol">
+            <b>Theo Ship</b> <span id="shipCount" class="muted"></span>
+            <input type="text" id="searchShip" placeholder="Tìm ship...">
+            <div class="selbtns">
+              <button id="btnAllShip" type="button">Chọn tất cả (đang hiện)</button>
+              <button id="btnNoneShip" type="button">Bỏ chọn</button>
+            </div>
+            <div id="listShip" class="list"></div>
+            <div id="noShipNote" class="muted" style="display:none">File dg1 không có cột Ship.</div>
+          </div>
+          <div class="selcol">
+            <b>Theo Code</b> <span id="codeCount" class="muted"></span>
+            <input type="text" id="searchCode" placeholder="Tìm code, khách hàng, điểm giao...">
+            <div class="selbtns">
+              <button id="btnAllCode" type="button">Chọn tất cả (đang hiện)</button>
+              <button id="btnNoneCode" type="button">Bỏ chọn</button>
+              <button id="btnNoShip" type="button">Chọn code không có Ship</button>
+            </div>
+            <div id="listCode" class="list"></div>
+            <p class="muted">Hoặc dán nhiều code (cách nhau bằng dấu cách, phẩy hoặc xuống dòng):</p>
+            <textarea id="paste" rows="3"></textarea>
+          </div>
         </div>
-        <div id="list" class="list"></div>
-        <div id="pasteBox" style="display:none">
-          <p class="muted">Hoặc dán nhiều code (cách nhau bằng dấu cách, phẩy hoặc xuống dòng):</p>
-          <textarea id="paste" rows="3"></textarea>
-        </div>
+        <div id="selSummary" class="muted" style="margin-top:8px"></div>
       </fieldset>
       <fieldset>
         <legend>Sắp xếp</legend>
+        <label><input type="checkbox" id="prodOnly"> Chỉ lấy tên sản phẩm (không lấy tên khách)</label>
+        <div class="muted">Xuất 1 cột Sản phẩm: mỗi sản phẩm một lần (gộp từ mọi khách đã chọn), xếp theo thứ tự bên dưới, chia vùng theo số dòng mỗi vùng.</div>
         <label>Số dòng sản phẩm mỗi vùng: <input type="text" id="zone" value="25" style="width:70px"></label>
         <div class="muted">Mỗi khách hàng nằm trọn trong 1 vùng; các vùng cách nhau 1 dòng trống.</div>
         <label>Thứ tự sản phẩm:</label>
@@ -191,11 +210,7 @@ function headerMap(ws){
 }
 
 function afterDg(){
-  if(!hasShip){
-    document.querySelector('input[value=code]').checked = true;
-    document.querySelector('input[value=ship]').disabled = true;
-  } else document.querySelector('input[value=ship]').disabled = false;
-  setStatus(); renderList();
+  setStatus(); renderLists();
 }
 $('fDg').addEventListener('change', async e=>{
   const f = e.target.files[0]; if(!f) return;
@@ -297,50 +312,74 @@ function setStatus(){
   $('status').innerHTML = html;
 }
 
-/* ---------- danh sách chọn ---------- */
-const mode = () => document.querySelector('input[name=mode]:checked').value;
-const selected = new Set();
+/* ---------- danh sách chọn: chọn đồng thời theo Ship và theo Code ---------- */
+const selShip = new Set(), selCode = new Set();
 
-function items(){
-  if(mode()==='ship'){
-    const m = new Map();
-    dgRows.forEach(r=>{ if(r.ship) m.set(r.ship,(m.get(r.ship)||0)+1); });
-    return [...m].sort((a,b)=>a[0].localeCompare(b[0])).map(([k,n])=>({key:k,label:`${k}  (${n} code)`}));
-  }
+function shipItems(){
+  const m = new Map();
+  dgRows.forEach(r=>{ if(r.ship) m.set(r.ship,(m.get(r.ship)||0)+1); });
+  return [...m].sort((a,b)=>a[0].localeCompare(b[0])).map(([k,n])=>({key:k,main:`${k}  (${n} code)`,sub:''}));
+}
+function codeItems(){
   const seen = new Set(), out = [];
-  dgRows.forEach(r=>{ if(seen.has(r.code)) return; seen.add(r.code);
-    out.push({key:r.code,label:`${r.code} — ${r.cus}`}); });
+  dgRows.forEach(r=>{
+    if(seen.has(r.code)) return; seen.add(r.code);
+    out.push({key:r.code, main:`${r.code} — ${r.cus}`, sub:r.point});   // sub = điểm giao
+  });
   return out;
 }
-function renderList(){
-  selected.clear();
-  $('pasteBox').style.display = mode()==='code' ? '' : 'none';
-  $('btnNoShip').style.display = mode()==='code' && hasShip ? '' : 'none';
-  const box = $('list'); box.innerHTML = '';
-  items().forEach(it=>{
+function fillList(box, items, sel){
+  box.innerHTML = '';
+  items.forEach(it=>{
     const l = document.createElement('label');
-    const c = document.createElement('input'); c.type='checkbox'; c.value = it.key;
-    c.addEventListener('change',()=>{ c.checked ? selected.add(it.key) : selected.delete(it.key); count(); });
-    l.append(c, ' ', it.label); l.dataset.t = it.label.toLowerCase();
+    const c = document.createElement('input'); c.type = 'checkbox'; c.value = it.key; c.checked = sel.has(it.key);
+    c.addEventListener('change',()=>{ c.checked ? sel.add(it.key) : sel.delete(it.key); count(); });
+    l.append(c, ' ', it.main);
+    if(it.sub){ const s = document.createElement('span'); s.className = 'pt'; s.textContent = it.sub; l.appendChild(s); }
+    l.dataset.t = (it.main + ' ' + (it.sub||'')).toLowerCase();
     box.appendChild(l);
+  });
+}
+function renderLists(){
+  selShip.clear(); selCode.clear();
+  $('searchShip').value = ''; $('searchCode').value = '';
+  fillList($('listShip'), shipItems(), selShip);
+  fillList($('listCode'), codeItems(), selCode);
+  $('noShipNote').style.display = hasShip ? 'none' : '';
+  $('btnNoShip').style.display = hasShip ? '' : 'none';
+  count();
+}
+function count(){
+  $('shipCount').textContent = selShip.size ? `· đã chọn ${selShip.size}` : '';
+  $('codeCount').textContent = selCode.size ? `· đã chọn ${selCode.size}` : '';
+  $('selSummary').textContent = `Đang chọn: ${selShip.size} ship + ${selCode.size} code (cộng code dán nếu có). Kết quả là tập hợp của cả hai.`;
+}
+function bulk(boxId, sel, on, onlyVisible){
+  [...$(boxId).querySelectorAll('label')].forEach(l=>{
+    if(onlyVisible && l.style.display === 'none') return;
+    const c = l.firstChild; c.checked = on; on ? sel.add(c.value) : sel.delete(c.value);
   });
   count();
 }
-function count(){ $('selCount').textContent = `Đã chọn: ${selected.size}`; }
-function visibleBoxes(){ return [...$('list').querySelectorAll('label')].filter(l=>l.style.display!=='none').map(l=>l.firstChild); }
-function setChecked(cb,v){ cb.checked=v; v ? selected.add(cb.value) : selected.delete(cb.value); }
-
-$('search').addEventListener('input',()=>{
-  const q = $('search').value.toLowerCase().trim();
-  $('list').querySelectorAll('label').forEach(l=>{ l.style.display = l.dataset.t.includes(q) ? '' : 'none'; });
-});
-$('btnAll').onclick = ()=>{ visibleBoxes().forEach(c=>setChecked(c,true)); count(); };
-$('btnNone').onclick = ()=>{ [...$('list').querySelectorAll('input')].forEach(c=>setChecked(c,false)); count(); };
+function bindSearch(inputId, boxId){
+  $(inputId).addEventListener('input',()=>{
+    const q = $(inputId).value.toLowerCase().trim();
+    $(boxId).querySelectorAll('label').forEach(l=>{ l.style.display = l.dataset.t.includes(q) ? '' : 'none'; });
+  });
+}
+bindSearch('searchShip','listShip'); bindSearch('searchCode','listCode');
+$('btnAllShip').onclick  = ()=>bulk('listShip', selShip, true, true);
+$('btnNoneShip').onclick = ()=>bulk('listShip', selShip, false, false);
+$('btnAllCode').onclick  = ()=>bulk('listCode', selCode, true, true);
+$('btnNoneCode').onclick = ()=>bulk('listCode', selCode, false, false);
 $('btnNoShip').onclick = ()=>{
   const codes = new Set(dgRows.filter(r=>!r.ship).map(r=>r.code));
-  [...$('list').querySelectorAll('input')].forEach(c=>setChecked(c, codes.has(c.value))); count();
+  [...$('listCode').querySelectorAll('label')].forEach(l=>{
+    const c = l.firstChild, on = codes.has(c.value);
+    c.checked = on; on ? selCode.add(c.value) : selCode.delete(c.value);
+  });
+  count();
 };
-document.querySelectorAll('input[name=mode]').forEach(r=>r.addEventListener('change',renderList));
 
 /* ---------- sắp xếp sản phẩm ---------- */
 function norm(s){
@@ -428,6 +467,7 @@ const outName = ()=>{
   return n + '.xlsx';
 };
 let layout = [];   // dòng hiển thị: {cus, p, first, blank}
+let layoutMode = 'full';   // 'full' = Khách hàng + Sản phẩm, 'prod' = chỉ Sản phẩm
 
 $('btnRun').onclick = ()=>{
   $('msg').textContent=''; $('out').innerHTML=''; $('btnDl').disabled = true; layout = [];
@@ -435,17 +475,16 @@ $('btnRun').onclick = ()=>{
   if(!prodIdx.size)  return $('msg').innerHTML='<span class="err">Chưa tải file sản phẩm.</span>';
   const limit = Math.max(1, parseInt($('zone').value) || 25);
 
-  let rows, warn = '';
-  if(mode()==='ship'){
-    rows = dgRows.filter(r=>selected.has(r.ship));
-  }else{
-    const codes = new Set(selected);
-    $('paste').value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean).forEach(c=>codes.add(c));
-    rows = dgRows.filter(r=>codes.has(r.code));
-    const missing = [...codes].filter(c=>!dgRows.some(r=>r.code===c));
-    if(missing.length) warn += `<span class="err">Code không có trong dg1: ${missing.join(', ')}. </span>`;
-  }
+  const prodOnly = $('prodOnly').checked;
+  // chọn đồng thời: tập hợp của (các ship đã chọn) và (các code đã chọn + code dán)
+  const pasted = $('paste').value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
+  const codes = new Set([...selCode, ...pasted]);
+  const rows = dgRows.filter(r=>(r.ship && selShip.has(r.ship)) || codes.has(r.code));
+  let warn = '';
+  const missing = [...new Set(pasted)].filter(c=>!dgRows.some(r=>r.code===c));
+  if(missing.length) warn += `<span class="err">Code không có trong dg1: ${missing.join(', ')}. </span>`;
   if(!rows.length) return $('msg').innerHTML = warn + '<span class="err">Chưa chọn dữ liệu nào.</span>';
+  const nameTag = [selShip.size ? 'ship' : '', codes.size ? 'code' : ''].filter(Boolean).join('_') || 'du_lieu';
 
   // 1) gom theo khách + điểm giao (dùng tên rút gọn nếu có quy ước)
   const rank = makeRank($('order').value);
@@ -454,8 +493,8 @@ $('btnRun').onclick = ()=>{
     const m = shortMap.get(mkKey(r.cus,r.point));
     // có quy ước: chỉ dùng tên khách rút gọn (không còn điểm giao); chưa có: giữ tên gốc + điểm giao
     const cus = (m && m.cus) || r.cus, point = (m && m.cus) ? '' : r.point;
-    const key = (cus+'||'+point).toLowerCase();
-    if(!groups.has(key)) groups.set(key,{cus:cus + (point ? '\n'+point : ''), prods:new Map()});
+    const key = prodOnly ? '' : (cus+'||'+point).toLowerCase();
+    if(!groups.has(key)) groups.set(key,{cus: prodOnly ? '' : cus + (point ? '\n'+point : ''), prods:new Map()});
     const prods = prodIdx.get(r.code);
     if(!prods) noProd.add(r.code);
     (prods||[]).forEach(p=>{
@@ -475,36 +514,55 @@ $('btnRun').onclick = ()=>{
 
   window.CPLastGroups = list;   // dữ liệu cho module điền form báo cáo
 
-  // 2) xếp vào các vùng (first-fit): khách không bị tách giữa 2 vùng
-  const zones = [];
-  list.forEach(g=>{
-    const size = Math.max(1,g.products.length);
-    let z = zones.find(z=>z.used+size<=limit);
-    if(!z){ z = {used:0,groups:[]}; zones.push(z); }
-    z.groups.push(g); z.used += size;
-  });
-
-  // 3) dàn thành các dòng, chèn 1 dòng trống giữa các vùng
-  zones.forEach((z,zi)=>{
-    if(zi>0) layout.push({blank:true});
-    z.groups.forEach(g=>{
-      const ps = g.products.length ? g.products : [''];
-      ps.forEach((p,i)=>layout.push({cus: i===0 ? g.cus : '', p, first: i===0}));
+  // 2) bố cục hiển thị / xuất
+  layoutMode = prodOnly ? 'prod' : 'full';
+  let zoneCount = 0, over = 0, shown = list.length;
+  if(prodOnly){
+    // chỉ sản phẩm: 1 cột, mỗi sản phẩm 1 lần, chia vùng theo số dòng mỗi vùng
+    const ps = list.length ? list[0].products : [];
+    shown = ps.length;
+    for(let i=0;i<ps.length;i+=limit){
+      if(i>0) layout.push({blank:true});
+      ps.slice(i,i+limit).forEach(p=>layout.push({cus:'',p,first:false}));
+    }
+    zoneCount = Math.ceil(ps.length/limit);
+  }else{
+    // xếp vào các vùng (first-fit): khách không bị tách giữa 2 vùng
+    const zones = [];
+    list.forEach(g=>{
+      const size = Math.max(1,g.products.length);
+      let z = zones.find(z=>z.used+size<=limit);
+      if(!z){ z = {used:0,groups:[]}; zones.push(z); }
+      z.groups.push(g); z.used += size;
     });
-  });
+    // dàn thành các dòng, chèn 1 dòng trống giữa các vùng
+    zones.forEach((z,zi)=>{
+      if(zi>0) layout.push({blank:true});
+      z.groups.forEach(g=>{
+        const ps = g.products.length ? g.products : [''];
+        ps.forEach((p,i)=>layout.push({cus: i===0 ? g.cus : '', p, first: i===0}));
+      });
+    });
+    zoneCount = zones.length; over = zones.filter(z=>z.used>limit).length;
+  }
 
-  let html = '<table><tr><th>Khách hàng</th><th>Sản phẩm</th></tr>';
+  let html = prodOnly ? '<table><tr><th>Sản phẩm</th></tr>' : '<table><tr><th>Khách hàng</th><th>Sản phẩm</th></tr>';
   layout.forEach(r=>{
+    if(prodOnly){
+      html += r.blank ? '<tr><td style="background:#ffd966;height:10px;padding:0"></td></tr>' : `<tr><td>${esc(r.p)}</td></tr>`;
+      return;
+    }
     html += r.blank ? '<tr><td colspan="2" style="background:#ffd966;height:10px;padding:0"></td></tr>'
       : '<tr>' + (r.first ? `<td class="cus grp">${esc(r.cus)}</td>` : '<td class="cus"></td>')
         + `<td${r.first?' class="grp"':''}>${esc(r.p)}</td></tr>`;
   });
   $('out').innerHTML = html + '</table>';
-  const over = zones.filter(z=>z.used>limit).length;
-  $('msg').innerHTML = warn + `<span class="ok">${list.length} khách/điểm giao, ${zones.length} vùng.</span>`
+  $('msg').innerHTML = warn
+    + (prodOnly ? `<span class="ok">${shown} sản phẩm (mỗi sản phẩm một lần), ${zoneCount} vùng.</span>`
+                : `<span class="ok">${shown} khách/điểm giao, ${zoneCount} vùng.</span>`)
     + (over ? ` <span class="err">${over} vùng vượt ${limit} dòng vì 1 khách có quá nhiều sản phẩm (không tách khách).</span>` : '')
     + (noProd.size ? ` <span class="err">Code không có sản phẩm: ${[...noProd].join(', ')}</span>` : '');
-  if(!fnameDirty) $('fname').value = mode()==='ship' ? 'ket_qua_theo_ship' : 'ket_qua_theo_code';
+  if(!fnameDirty) $('fname').value = prodOnly ? 'danh_sach_san_pham' : 'ket_qua_theo_' + nameTag;
   $('btnDl').disabled = false;
 };
 
@@ -512,17 +570,24 @@ $('btnRun').onclick = ()=>{
 async function buildResult(){
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Kết quả');
-  ws.columns = [{width:55},{width:50}];
+  const prodOnly = layoutMode === 'prod';
+  ws.columns = prodOnly ? [{width:60}] : [{width:55},{width:50}];
   const thin = {style:'thin'};
-  const head = ws.addRow(['Khách hàng','Sản phẩm']);
+  const head = ws.addRow(prodOnly ? ['Sản phẩm'] : ['Khách hàng','Sản phẩm']);
   head.font = {bold:true};
   head.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}};
     c.border={top:thin,bottom:thin,left:thin,right:thin}; });
   layout.forEach(x=>{
     if(x.blank){
-      const sep = ws.addRow(['','']);
+      const sep = ws.addRow(prodOnly ? [''] : ['','']);
       sep.height = 10;
-      [1,2].forEach(i=>{ sep.getCell(i).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFFD966'}}; });
+      (prodOnly ? [1] : [1,2]).forEach(i=>{ sep.getCell(i).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFFD966'}}; });
+      return;
+    }
+    if(prodOnly){
+      const pr = ws.addRow([x.p]);
+      pr.eachCell({includeEmpty:true},c=>{ c.alignment = {wrapText:true, vertical:'top'}; c.border = {left:thin,right:thin,bottom:thin,top:thin}; });
+      const ph = Math.ceil(x.p.length/55) * 15; if(ph>15) pr.height = ph;
       return;
     }
     const r = ws.addRow([x.cus, x.p]);

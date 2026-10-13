@@ -207,7 +207,7 @@
         const parts = String(seg.cus || '').split('\n');
         const name = parts.shift() || '', point = parts.join(' ');
         const text = [name, point].filter(Boolean).join(n > 1 ? '\n' : ' - ');
-        if (n > 1) out.mergeCells(r, zi.cu, r + n - 1, zi.cu);
+        if (n > 1 && text) out.mergeCells(r, zi.cu, r + n - 1, zi.cu);   // không gộp ô khi chỉ xuất sản phẩm (không có tên khách)
         const top = out.getRow(r).getCell(zi.cu);
         let h = 0; for (let i = 0; i < n; i++) h += out.getRow(r + i).height || 15;
         top.value = text;
@@ -285,9 +285,10 @@
         a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
         a.download = name; a.click();
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-        msg('Đã điền ' + groups.length + ' khách vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
+        const prodOnly = groups.length === 1 && !String(groups[0].cus || '').trim();   // chế độ chỉ lấy sản phẩm
+        msg('Đã điền ' + (prodOnly ? groups[0].products.length + ' sản phẩm' : groups.length + ' khách') + ' vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
             (info.titleCells.length ? ' Tên file đã ghi vào ô ' + info.titleCells.join(', ') + '.' : '') +
-            (info.splits ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
+            (info.splits && !prodOnly ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
       } catch (e) { msg('Lỗi: ' + e.message, 'err'); }
     };
   }
