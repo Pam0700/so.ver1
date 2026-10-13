@@ -147,6 +147,7 @@
         <div id="msg" class="muted">Chưa có kết quả. Vào "Chọn &amp; xử lý" và bấm Xử lý.</div>
         <div style="margin-top:8px">
           <label class="inl">Tên file: <input type="text" id="fname" style="width:240px"> .xlsx</label>
+          <label class="inl"><input type="checkbox" id="optPrint" checked> Đặt sẵn vùng in (A4, mỗi vùng một mặt giấy)</label>
           <button id="btnDl" type="button" class="primary" disabled>Tải xuống Excel</button>
           <button type="button" data-go="p-form">Điền vào form báo cáo &rarr;</button>
         </div>
@@ -187,6 +188,7 @@
 <script src="converter.js"></script>
 <script src="product-short.js"></script>
 <script src="template-fill.js"></script>
+<script src="print-setup.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let dgRows = [];          // {code, cus, point, ship}
@@ -573,6 +575,8 @@ async function buildResult(){
   const prodOnly = layoutMode === 'prod';
   ws.columns = prodOnly ? [{width:60}] : [{width:55},{width:50}];
   const thin = {style:'thin'};
+  let rowNo = 1, zoneH = 15, sepH = 10;   // theo dõi chiều cao từng vùng để đặt vùng in
+  const zoneHeights = [], breakRows = [];
   const head = ws.addRow(prodOnly ? ['Sản phẩm'] : ['Khách hàng','Sản phẩm']);
   head.font = {bold:true};
   head.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E6E6'}};
@@ -580,7 +584,8 @@ async function buildResult(){
   layout.forEach(x=>{
     if(x.blank){
       const sep = ws.addRow(prodOnly ? [''] : ['','']);
-      sep.height = 10;
+      sep.height = 10; rowNo++;
+      zoneHeights.push(zoneH + sepH); breakRows.push(rowNo); zoneH = 15;   // ngắt trang sau dòng vàng ngăn cách
       (prodOnly ? [1] : [1,2]).forEach(i=>{ sep.getCell(i).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFFD966'}}; });
       return;
     }
@@ -588,6 +593,7 @@ async function buildResult(){
       const pr = ws.addRow([x.p]);
       pr.eachCell({includeEmpty:true},c=>{ c.alignment = {wrapText:true, vertical:'top'}; c.border = {left:thin,right:thin,bottom:thin,top:thin}; });
       const ph = Math.ceil(x.p.length/55) * 15; if(ph>15) pr.height = ph;
+      rowNo++; zoneH += Math.max(15, ph);
       return;
     }
     const r = ws.addRow([x.cus, x.p]);
@@ -598,7 +604,15 @@ async function buildResult(){
     const lines = x.first ? x.cus.split('\n').reduce((n,l)=>n+Math.max(1,Math.ceil(l.length/50)),0) : 1;
     const h = Math.max(lines, Math.ceil(x.p.length/45), 1) * 15;
     if(h>15) r.height = h;
+    rowNo++; zoneH += Math.max(15, h);
   });
+  zoneHeights.push(zoneH);
+  if($('optPrint').checked && window.CPPrint){
+    const widths = prodOnly ? [60] : [55,50];
+    CPPrint.apply(ws,{ widths, zoneHeights, breakRows, orientation:'auto', printTitlesRow:'1:1', footer:true,
+      margins:{left:0.4,right:0.4,top:0.5,bottom:0.5,header:0.3,footer:0.3} });
+    ws.pageSetup.printArea = 'A1:' + (prodOnly ? 'A' : 'B') + rowNo;
+  }
   return await wb.xlsx.writeBuffer();
 }
 $('btnDl').onclick = async ()=>{
