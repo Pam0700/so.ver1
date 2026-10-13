@@ -7,6 +7,8 @@
  *       -> Code | Tên khách hàng | Điểm giao hàng | Ship      (giống file dg1)
  *   - File chi tiết (50_...):  lấy SO, Ten sp
  *       -> Code | Sản phẩm                                     (giống file 50 / 54)
+ *     Bản xuất mới của file 50 không có dòng tiêu đề cột (dòng 1 chỉ là tên công ty, 45 cột): trang tự dò
+ *     cột mã SO (dạng 2650D196696) và cột tên sản phẩm (có quy cách kg/g) theo nội dung.
  *
  * Cách gắn vào trang: thêm một thẻ div có id="converterBox" và nạp file converter.js bằng thẻ script (src).
  * Trang chính (nếu có) gọi CPConverter.readFile(file) để đọc thẳng CSV mà không cần chuyển.
@@ -135,6 +137,38 @@
   }
   const T = function (s) { return String(s == null ? '' : s).trim(); };
 
+  // File 50 bản mới: không có tiêu đề cột. Dò theo nội dung:
+  //  - cột mã SO: >= 90% dòng khớp dạng 2650D196696 (mã hàng 2300CC240002 đứng ngay trước tên sản phẩm cũng khớp -> loại)
+  //  - cột tên sản phẩm: cột có nhiều dòng nhất chứa chữ + quy cách (5KG, 500g...)
+  const SO_RE = /^\d{3,4}[A-Z]{1,3}\d{4,8}$/;
+  const UNIT_RE = /\d\s*(kg|g|gr)\b/i, LET_RE = /[A-Za-z\u00C0-\u1EF9]/;
+  function detectHeaderless(rows) {
+    const data = rows.filter(function (r) { return r.length >= 9; }).slice(0, 600);
+    if (data.length < 5) return null;
+    let maxC = 0; data.forEach(function (r) { maxC = Math.max(maxC, r.length); });
+    maxC = Math.min(maxC, 80);
+    const so = [], score = [];
+    for (let c = 0; c < maxC; c++) {
+      let hit = 0, name = 0;
+      data.forEach(function (r) {
+        const v = T(r[c]);
+        if (SO_RE.test(v)) hit++;
+        if (v && LET_RE.test(v) && UNIT_RE.test(v)) name++;
+      });
+      if (hit / data.length >= 0.9) so.push(c);
+      score.push(name / data.length);
+    }
+    if (!so.length) return null;
+    let prod = -1, best = 0, second = 0;
+    score.forEach(function (s, c) {
+      if (so.indexOf(c) >= 0) return;
+      if (s > best) { second = best; best = s; prod = c; } else if (s > second) second = s;
+    });
+    if (prod < 0 || best < 0.5 || best < second * 2) return null;
+    const cand = so.filter(function (c) { return c !== prod - 1; });   // bỏ mã hàng đứng ngay trước tên sản phẩm
+    return { codeCol: (cand.length ? cand : so)[0], prodCol: prod };
+  }
+
   function extract(rows, name) {
     let h = findHeader(rows, ['rdoc_number', 'rcv_name', 'rship_to']);
     if (h) {
@@ -155,6 +189,16 @@
         if (code && p) out.push({ code: code, name: p });
       });
       return { name: name, type: 'prod', rows: out };
+    }
+    const hl = detectHeaderless(rows);
+    if (hl) {
+      const out = [];
+      rows.forEach(function (r) {
+        if (r.length <= hl.prodCol) return;
+        const code = T(r[hl.codeCol]), p = T(r[hl.prodCol]);
+        if (SO_RE.test(code) && p) out.push({ code: code, name: p });
+      });
+      return { name: name, type: 'prod', rows: out, headerless: true };
     }
     return { name: name, type: null, rows: [] };
   }
@@ -249,8 +293,8 @@
         d.style.margin = '3px 0';
         const label = it.error ? 'Lỗi: ' + it.error
           : it.type === 'gd' ? 'File giao hàng — ' + it.rows.length + ' dòng (' + it.rows.filter(function (r) { return r.ship; }).length + ' có Ship)'
-          : it.type === 'prod' ? 'File sản phẩm — ' + it.rows.length + ' dòng'
-          : 'Không nhận dạng được (thiếu cột rDoc_number/rCv_name/rShip_to hoặc SO/Ten sp)';
+          : it.type === 'prod' ? 'File sản phẩm — ' + it.rows.length + ' dòng' + (it.headerless ? ' (file không có tiêu đề cột, tự dò cột SO và Ten sp)' : '')
+          : 'Không nhận dạng được (thiếu cột rDoc_number/rCv_name/rShip_to hoặc SO/Ten sp, và không dò được cột SO + tên sản phẩm)';
         d.append(it.name + ': ' + label + ' ');
         if (it.type) {
           const b = document.createElement('button');
