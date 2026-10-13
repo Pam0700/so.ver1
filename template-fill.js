@@ -10,6 +10,7 @@
  *    sang vùng kế tiếp, tên khách được ghi lại ở dòng đầu.
  *  - Cột Khách hàng: ghi 1 lần ở dòng đầu, gộp ô theo số sản phẩm. Cột Sản phẩm: thu nhỏ chữ vừa ô.
  *  - Tên file (opts.title) được ghi vào ô J của dòng thứ 4 mỗi vùng có dữ liệu: J4, J43, J81, ...
+ *  - Vùng in (cần print-setup.js): A4, mỗi vùng 1 mặt giấy, tự chọn hướng giấy và tỉ lệ in (opts.print = false để tắt).
  *
  * Cách gắn vào trang: thêm một thẻ div có id="templateBox" và nạp file này bằng thẻ script (src).
  * Dữ liệu lấy từ biến window.CPLastGroups = [{cus: "tên\nđiểm giao", products: [...]}, ...]
@@ -238,11 +239,22 @@
 
     out.pageSetup.printArea = 'A1:' + colLetter(maxCol) + (base - 1);
 
+    // vùng in: A4, mỗi vùng 1 mặt giấy (ngắt trang đã đặt ở trên)
+    let printInfo = null;
+    if (opts.print !== false && root.CPPrint) {
+      const dh = (out.properties && out.properties.defaultRowHeight) || 15;
+      const widths = []; for (let c = 1; c <= maxCol; c++) widths.push(out.getColumn(c).width || 9.14);
+      const zh = zoneInfo.map(function (zi) { let s = 0; for (let r = zi.base; r <= zi.end; r++) s += out.getRow(r).height || dh; return s; });
+      const m = out.pageSetup.margins;   // giữ lề của form (nếu có)
+      printInfo = root.CPPrint.apply(out, { widths: widths, zoneHeights: zh, orientation: 'auto',
+        margins: m && typeof m.left === 'number' ? m : { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0, footer: 0 } });
+    }
+
     // bỏ trang tính cũ (và các trang tính khác nếu được chọn), đặt lại tên
     wb.removeWorksheet(ws.id);
     if (opts.onlyReport) wb.worksheets.slice().forEach(function (s) { if (s !== out) wb.removeWorksheet(s.id); });
     out.name = oldName;
-    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells };
+    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells, print: printInfo };
   }
 
   /* ---------- 4. giao diện ---------- */
@@ -258,6 +270,7 @@
       '<label><input type="checkbox" id="tfOnly" checked> Chỉ giữ trang tính báo cáo (bỏ các trang tính khác)</label>' +
       '<label>Tên file: <input type="text" id="tfName" value="bao_cao_xuat_hang" style="width:240px"> .xlsx</label>' +
       '<label><input type="checkbox" id="tfTitle" checked> Ghi tên file vào ô J4, J43, J81... (mỗi vùng có dữ liệu)</label>' +
+      '<label><input type="checkbox" id="tfPrint" checked> Đặt sẵn vùng in: A4, mỗi vùng một mặt giấy</label>' +
       '<button id="tfGo" type="button">Điền vào form &amp; tải xuống</button>' +
       '<div id="tfMsg" class="muted"></div></fieldset>';
     const $q = function (id) { return box.querySelector(id); };
@@ -278,7 +291,7 @@
         await wb.xlsx.load(formBuf);
         const base = $q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao';
         const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked,
-                                                title: $q('#tfTitle').checked ? base : '' });
+                                                title: $q('#tfTitle').checked ? base : '', print: $q('#tfPrint').checked });
         const buf = await wb.xlsx.writeBuffer();
         const name = base + '.xlsx';
         const a = document.createElement('a');
@@ -288,6 +301,8 @@
         const prodOnly = groups.length === 1 && !String(groups[0].cus || '').trim();   // chế độ chỉ lấy sản phẩm
         msg('Đã điền ' + (prodOnly ? groups[0].products.length + ' sản phẩm' : groups.length + ' khách') + ' vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
             (info.titleCells.length ? ' Tên file đã ghi vào ô ' + info.titleCells.join(', ') + '.' : '') +
+            (info.print ? ' In: A4 ' + (info.print.orientation === 'landscape' ? 'ngang' : 'dọc') + ', tỉ lệ ' + info.print.scale + '%, mỗi vùng một mặt giấy' +
+              (info.print.fits ? '.' : ' (vùng quá lớn, có thể tràn sang trang sau).') : '') +
             (info.splits && !prodOnly ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
       } catch (e) { msg('Lỗi: ' + e.message, 'err'); }
     };
