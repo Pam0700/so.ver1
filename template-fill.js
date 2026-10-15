@@ -154,9 +154,11 @@
     const nZones = Math.max(1, planned.zones.length);
     const maxCol = det.printCols || 24;
 
-    // trang tính mới (tránh spliceRows làm lệch ô gộp)
+    // sổ làm việc MỚI chỉ chứa trang báo cáo (tránh để lại trang tính ẩn, activeTab, tên định nghĩa của form gốc
+    // làm Excel báo "We found a problem with some content"); trang tính mới tránh spliceRows làm lệch ô gộp
     const oldName = ws.name;
-    const out = wb.addWorksheet('__tmp_form__', {
+    const nb = new root.ExcelJS.Workbook();
+    const out = nb.addWorksheet(oldName, {
       properties: clone(ws.properties) || undefined,
       pageSetup: clone(ws.pageSetup) || undefined,
       headerFooter: clone(ws.headerFooter) || undefined,
@@ -193,7 +195,8 @@
           }
         });
       });
-      zoneInfo.push({ base: base, dataStart: base + plan.dataOffset, end: base + plan.total - 1, cu: tpl.cu, pr: tpl.pr });
+      zoneInfo.push({ base: base, dataStart: base + plan.dataOffset, end: base + plan.total - 1, cu: tpl.cu, pr: tpl.pr,
+                      tplStart: tpl.start, tplEnd: tpl.end, parts: plan.parts });
       if (z < nZones - 1) out.getRow(base + plan.total - 1).addPageBreak();
       base += plan.total;
     }
@@ -250,11 +253,9 @@
         margins: m && typeof m.left === 'number' ? m : { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0, footer: 0 } });
     }
 
-    // bỏ trang tính cũ (và các trang tính khác nếu được chọn), đặt lại tên
-    wb.removeWorksheet(ws.id);
-    if (opts.onlyReport) wb.worksheets.slice().forEach(function (s) { if (s !== out) wb.removeWorksheet(s.id); });
-    out.name = oldName;
-    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells, print: printInfo };
+    // vị trí các vùng, dùng để chép lại ô chữ ký (text box) của form gốc (form-shapes.js)
+    const zoneMap = zoneInfo.map(function (z) { return { base: z.base, start: z.tplStart, end: z.tplEnd, parts: z.parts }; });
+    return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells, print: printInfo, workbook: nb, zoneMap: zoneMap };
   }
 
   /* ---------- 4. giao diện ---------- */
@@ -267,7 +268,6 @@
         ? '<label>Form báo cáo: dùng form lưu sẵn trên hệ thống. Hoặc chọn form khác (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>'
         : '<label>File form báo cáo (.xlsx): <input type="file" id="tfFile" accept=".xlsx"></label>') +
       '<label>Tên trang tính (để trống = tự nhận): <input type="text" id="tfSheet" style="width:220px"></label>' +
-      '<label><input type="checkbox" id="tfOnly" checked> Chỉ giữ trang tính báo cáo (bỏ các trang tính khác)</label>' +
       '<label>Tên file: <input type="text" id="tfName" value="bao_cao_xuat_hang" style="width:240px"> .xlsx</label>' +
       '<label><input type="checkbox" id="tfTitle" checked> Ghi tên file vào ô J4, J43, J81... (mỗi vùng có dữ liệu)</label>' +
       '<label><input type="checkbox" id="tfPrint" checked> Đặt sẵn vùng in: A4, mỗi vùng một mặt giấy</label>' +
@@ -290,9 +290,14 @@
         const wb = new root.ExcelJS.Workbook();
         await wb.xlsx.load(formBuf);
         const base = $q('#tfName').value.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '').trim() || 'bao_cao';
-        const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), onlyReport: $q('#tfOnly').checked,
+        const info = fillWorkbook(wb, groups, { sheetName: $q('#tfSheet').value.trim(), 
                                                 title: $q('#tfTitle').checked ? base : '', print: $q('#tfPrint').checked });
-        const buf = await wb.xlsx.writeBuffer();
+        let buf = await info.workbook.xlsx.writeBuffer();
+        let shapeNote = '';
+        if (root.CPFormShapes) {   // chép lại ô chữ ký (text box) mà ExcelJS không giữ được
+          try { const r = await root.CPFormShapes.inject(buf, formBuf, info.sheet, info.zoneMap); buf = r.buffer; if (r.count) shapeNote = ' Đã giữ ' + r.count + ' ô chữ ký (text box).'; }
+          catch (e) { shapeNote = ' Lưu ý: chưa giữ được ô chữ ký (text box) của form: ' + e.message; }
+        }
         const name = base + '.xlsx';
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -300,7 +305,7 @@
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
         const prodOnly = groups.length === 1 && !String(groups[0].cus || '').trim();   // chế độ chỉ lấy sản phẩm
         msg('Đã điền ' + (prodOnly ? groups[0].products.length + ' sản phẩm' : groups.length + ' khách') + ' vào ' + info.zones + ' vùng (trang tính "' + info.sheet + '", mỗi vùng ' + info.cap + ' dòng).' +
-            (info.titleCells.length ? ' Tên file đã ghi vào ô ' + info.titleCells.join(', ') + '.' : '') +
+            shapeNote + (info.titleCells.length ? ' Tên file đã ghi vào ô ' + info.titleCells.join(', ') + '.' : '') +
             (info.print ? ' In: A4 ' + (info.print.orientation === 'landscape' ? 'ngang' : 'dọc') + ', tỉ lệ ' + info.print.scale + '%, mỗi vùng một mặt giấy' +
               (info.print.fits ? '.' : ' (vùng quá lớn, có thể tràn sang trang sau).') : '') +
             (info.splits && !prodOnly ? ' ' + info.splits + ' khách quá ' + info.cap + ' sản phẩm được tách sang vùng kế tiếp.' : ''), 'ok');
