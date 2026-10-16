@@ -258,6 +258,19 @@
     return { sheet: oldName, zones: nZones, cap: cap, splits: planned.splits, segCount: planned.segCount, rowsLast: base - 1, titleCells: titleCells, print: printInfo, workbook: nb, zoneMap: zoneMap };
   }
 
+  // Dựng 1 file hoàn chỉnh: điền form, ghi file, chép lại ô chữ ký. Dùng cho 1 file (giao diện) hoặc nhiều file (Điều xe).
+  // wb: form đã nạp bằng ExcelJS (dùng lại được nhiều lần); formBuf: nội dung .xlsx của form (để chép ô chữ ký)
+  async function renderFile(wb, formBuf, groups, opts) {
+    const info = fillWorkbook(wb, groups, opts || {});
+    let buf = await info.workbook.xlsx.writeBuffer();
+    let shapes = 0, shapeError = '';
+    if (root.CPFormShapes && formBuf) {
+      try { const r = await root.CPFormShapes.inject(buf, formBuf, info.sheet, info.zoneMap); buf = r.buffer; shapes = r.count; }
+      catch (e) { shapeError = e.message; }
+    }
+    return { buffer: buf, info: info, shapes: shapes, shapeError: shapeError };
+  }
+
   /* ---------- 4. giao diện ---------- */
   function initUI() {
     const box = document.getElementById('templateBox');
@@ -313,7 +326,7 @@
     };
   }
 
-  const api = { planZones: planZones, detectBlocks: detectBlocks, blockPlan: blockPlan, fillWorkbook: fillWorkbook, fitFont: fitFont, initUI: initUI };
+  const api = { planZones: planZones, detectBlocks: detectBlocks, blockPlan: blockPlan, fillWorkbook: fillWorkbook, renderFile: renderFile, fitFont: fitFont, initUI: initUI };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CPTemplateFill = api;
   if (typeof document !== 'undefined') {

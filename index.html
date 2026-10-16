@@ -76,6 +76,7 @@
       <a data-p="p-result" data-n="3"><span class="n">3</span>Kết quả</a>
       <a data-p="p-form" data-n="4"><span class="n">4</span>Điền form báo cáo</a>
       <div class="sep">Công cụ</div>
+      <a data-p="p-dispatch" data-n="Xe"><span class="n">Xe</span>Điều xe</a>
       <a data-p="p-convert" data-n="⇄"><span class="n">⇄</span>Chuyển CSV gốc</a>
       <a data-p="p-short" data-n="Aa"><span class="n">Aa</span>Quy ước rút gọn</a>
     </nav>
@@ -162,6 +163,13 @@
       <div id="templateBox"></div>
     </section>
 
+    <section class="panel" id="p-dispatch">
+      <h2>Điều xe</h2>
+      <p class="sub">Tải file điều xe (cột STT và Ship). Mỗi dòng có Ship tạo một form báo cáo đã điền, tên file là STT; tất cả gom vào một file zip. Cần đã tải dg1 và file sản phẩm ở bước 1.</p>
+      <!-- Module Điều xe (dispatch.js) — có thể gỡ bỏ độc lập -->
+      <div id="dispatchBox"></div>
+    </section>
+
     <section class="panel" id="p-convert">
       <h2>Chuyển CSV gốc</h2>
       <p class="sub">Sửa lỗi font và lọc dữ liệu từ file CSV tải về, xuất ra .xlsx. (Không bắt buộc: các ô tải ở bước 1 cũng nhận thẳng file CSV.)</p>
@@ -190,6 +198,7 @@
 <script src="template-fill.js"></script>
 <script src="print-setup.js"></script>
 <script src="form-shapes.js"></script>
+<script src="dispatch.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let dgRows = [];          // {code, cus, point, ship}
@@ -472,25 +481,9 @@ const outName = ()=>{
 let layout = [];   // dòng hiển thị: {cus, p, first, blank}
 let layoutMode = 'full';   // 'full' = Khách hàng + Sản phẩm, 'prod' = chỉ Sản phẩm
 
-$('btnRun').onclick = ()=>{
-  $('msg').textContent=''; $('out').innerHTML=''; $('btnDl').disabled = true; layout = [];
-  if(!dgRows.length) return $('msg').innerHTML='<span class="err">Chưa tải file dg1.</span>';
-  if(!prodIdx.size)  return $('msg').innerHTML='<span class="err">Chưa tải file sản phẩm.</span>';
-  const limit = Math.max(1, parseInt($('zone').value) || 25);
-
-  const prodOnly = $('prodOnly').checked;
-  // chọn đồng thời: tập hợp của (các ship đã chọn) và (các code đã chọn + code dán)
-  const pasted = $('paste').value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
-  const codes = new Set([...selCode, ...pasted]);
-  const rows = dgRows.filter(r=>(r.ship && selShip.has(r.ship)) || codes.has(r.code));
-  let warn = '';
-  const missing = [...new Set(pasted)].filter(c=>!dgRows.some(r=>r.code===c));
-  if(missing.length) warn += `<span class="err">Code không có trong dg1: ${missing.join(', ')}. </span>`;
-  if(!rows.length) return $('msg').innerHTML = warn + '<span class="err">Chưa chọn dữ liệu nào.</span>';
-  const nameTag = [selShip.size ? 'ship' : '', codes.size ? 'code' : ''].filter(Boolean).join('_') || 'du_lieu';
-
-  // 1) gom theo khách + điểm giao (dùng tên rút gọn nếu có quy ước)
-  const rank = makeRank($('order').value);
+// gom dữ liệu thành danh sách khách + sản phẩm (dùng cho trang Kết quả và module Điều xe)
+function buildGroups(rows, prodOnly, orderStr){
+  const rank = makeRank(orderStr);
   const groups = new Map(), noProd = new Set();
   rows.forEach(r=>{
     const m = shortMap.get(mkKey(r.cus,r.point));
@@ -514,6 +507,31 @@ $('btnRun').onclick = ()=>{
     cus: g.cus,
     products: [...g.prods.values()].sort((a,b)=>a.rk-b.rk || a.name.localeCompare(b.name,'vi')).map(x=>x.name)
   }));
+  return {list, noProd};
+}
+window.CPBuildGroups = buildGroups;
+window.CPGetDgRows = ()=>dgRows;
+window.CPHasProducts = ()=>prodIdx.size>0;
+
+$('btnRun').onclick = ()=>{
+  $('msg').textContent=''; $('out').innerHTML=''; $('btnDl').disabled = true; layout = [];
+  if(!dgRows.length) return $('msg').innerHTML='<span class="err">Chưa tải file dg1.</span>';
+  if(!prodIdx.size)  return $('msg').innerHTML='<span class="err">Chưa tải file sản phẩm.</span>';
+  const limit = Math.max(1, parseInt($('zone').value) || 25);
+
+  const prodOnly = $('prodOnly').checked;
+  // chọn đồng thời: tập hợp của (các ship đã chọn) và (các code đã chọn + code dán)
+  const pasted = $('paste').value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
+  const codes = new Set([...selCode, ...pasted]);
+  const rows = dgRows.filter(r=>(r.ship && selShip.has(r.ship)) || codes.has(r.code));
+  let warn = '';
+  const missing = [...new Set(pasted)].filter(c=>!dgRows.some(r=>r.code===c));
+  if(missing.length) warn += `<span class="err">Code không có trong dg1: ${missing.join(', ')}. </span>`;
+  if(!rows.length) return $('msg').innerHTML = warn + '<span class="err">Chưa chọn dữ liệu nào.</span>';
+  const nameTag = [selShip.size ? 'ship' : '', codes.size ? 'code' : ''].filter(Boolean).join('_') || 'du_lieu';
+
+  // 1) gom theo khách + điểm giao (dùng tên rút gọn nếu có quy ước)
+  const {list, noProd} = buildGroups(rows, prodOnly, $('order').value);
 
   window.CPLastGroups = list;   // dữ liệu cho module điền form báo cáo
 
