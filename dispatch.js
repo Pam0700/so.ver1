@@ -1,7 +1,9 @@
 /*
  * dispatch.js — Module độc lập: "Điều xe" -> mỗi dòng 1 file form báo cáo đã điền, gom thành file zip.
  *
- * File điều xe (.xlsx): 2 cột có tiêu đề "STT" và "Ship".
+ * File điều xe (.xlsx): chỉ đọc TRANG TÍNH ĐẦU TIÊN. Tự tìm ô tiêu đề "STT" và "Shipment" (hoặc "Ship") trong
+ * 30 dòng đầu; hai tiêu đề có thể nằm khác dòng, khác cột (vd. STT ở A7, Shipment ở X8). Dữ liệu là các dòng
+ * bên dưới cả hai tiêu đề. STT có thể là công thức (lấy giá trị đã tính).
  *   - Ship là 3 hoặc 4 số cuối của mã ship (vd. 158 ứng với 24SPF47158). Ô "458+544" nghĩa là 2 ship.
  *   - Ô Ship trống thì bỏ qua.
  * Mỗi dòng có ship: lọc dữ liệu của (các) ship đó, điền vào form báo cáo, đặt tên file theo STT (vd. 10.xlsx),
@@ -18,22 +20,33 @@
     return T(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
   };
 
-  /* ---------- đọc bảng điều xe (rows = mảng các mảng chuỗi) ---------- */
-  function parseTable(rows) {
-    let hi = -1, cStt = -1, cShip = -1;
-    for (let i = 0; i < Math.min(rows.length, 15) && hi < 0; i++) {
-      const low = rows[i].map(plain);
-      const a = low.indexOf('stt'), b = low.indexOf('ship');
-      if (a >= 0 && b >= 0) { hi = i; cStt = a; cShip = b; }
+  /* ---------- đọc bảng điều xe ---------- */
+  // cellText(r, c) -> chuỗi hiển thị của ô (dòng, cột bắt đầu từ 1); rowCount: số dòng của trang tính
+  function parseSheet(cellText, rowCount) {
+    const HEAD_ROWS = Math.min(rowCount, 30), HEAD_COLS = 80;
+    let stt = null, ship = null, shipAlt = null;
+    for (let r = 1; r <= HEAD_ROWS; r++) {
+      for (let c = 1; c <= HEAD_COLS; c++) {
+        const t = plain(cellText(r, c));
+        if (!t) continue;
+        if (!stt && t === 'stt') stt = { r: r, c: c };
+        if (!ship && t === 'shipment') ship = { r: r, c: c };
+        if (!shipAlt && t === 'ship') shipAlt = { r: r, c: c };
+      }
     }
-    if (hi < 0) throw new Error('Không thấy tiêu đề "STT" và "Ship" trong file điều xe.');
+    ship = ship || shipAlt;
+    if (!stt || !ship) {
+      throw new Error('Không thấy ô tiêu đề ' + (!stt && !ship ? '"STT" và "Shipment"' : !stt ? '"STT"' : '"Shipment"') +
+                      ' trong 30 dòng đầu của trang tính đầu tiên.');
+    }
+    const start = Math.max(stt.r, ship.r) + 1;          // dữ liệu nằm dưới cả hai tiêu đề
     const out = [];
-    for (let i = hi + 1; i < rows.length; i++) {
-      const stt = T(rows[i][cStt]), ship = T(rows[i][cShip]);
-      if (!stt && !ship) continue;
-      out.push({ line: i + 1, stt: stt, ship: ship });
+    for (let r = start; r <= rowCount; r++) {
+      const s = T(cellText(r, stt.c)), sh = T(cellText(r, ship.c));
+      if (!s && !sh) continue;
+      out.push({ line: r, stt: s, ship: sh });
     }
-    return out;
+    return { items: out, sttPos: stt, shipPos: ship, start: start };
   }
 
   // "458+544" -> ["458","544"]
@@ -93,7 +106,7 @@
     if (!box) return;
     box.innerHTML =
       '<fieldset><legend>Điều xe → mỗi dòng một form báo cáo, gom thành file zip</legend>' +
-      '<label>File điều xe (.xlsx, 2 cột STT và Ship): <input type="file" id="dxFile" accept=".xlsx"></label>' +
+      '<label>File điều xe (.xlsx; chỉ đọc trang tính đầu tiên, dưới tiêu đề STT và Shipment): <input type="file" id="dxFile" accept=".xlsx"></label>' +
       '<label>Form báo cáo (bỏ trống để dùng form lưu sẵn trên hệ thống, nếu có): <input type="file" id="dxForm" accept=".xlsx"></label>' +
       '<label><input type="checkbox" id="dxTitle" checked> Ghi tên file (STT) vào ô J4, J43... mỗi vùng có dữ liệu</label>' +
       '<label><input type="checkbox" id="dxPrint" checked> Đặt sẵn vùng in: A4, mỗi vùng một mặt giấy</label>' +
@@ -104,27 +117,18 @@
       '<div id="dxOut" style="overflow-x:auto"></div></fieldset>';
     const $q = function (id) { return box.querySelector(id); };
     const msg = function (html) { $q('#dxMsg').innerHTML = html; };
-    let items = [], plan = [];
+    let items = [], plan = [], sheetInfo = '';
+    const colName = function (n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
 
+    // chỉ đọc trang tính ĐẦU TIÊN của file điều xe
     async function readTable(file) {
       const wb = new root.ExcelJS.Workbook();
       await wb.xlsx.load(await file.arrayBuffer());
-      const ws = wb.worksheets.find(function (w) {
-        let ok = false;
-        w.eachRow({ includeEmpty: false }, function (row, n) {
-          if (n > 15 || ok) return;
-          const low = []; for (let c = 1; c <= 10; c++) low.push(plain(row.getCell(c).text));
-          if (low.indexOf('stt') >= 0 && low.indexOf('ship') >= 0) ok = true;
-        });
-        return ok;
-      }) || wb.worksheets[0];
-      const rows = [];
-      ws.eachRow({ includeEmpty: true }, function (row, n) {
-        const r = []; for (let c = 1; c <= 10; c++) r.push(row.getCell(c).text);
-        while (rows.length < n - 1) rows.push([]);
-        rows.push(r);
-      });
-      return parseTable(rows);
+      const ws = wb.worksheets[0];
+      if (!ws) throw new Error('File không có trang tính nào.');
+      const res = parseSheet(function (r, c) { const t = ws.getRow(r).getCell(c).text; return t == null ? '' : String(t); }, ws.rowCount || 0);
+      res.sheetName = ws.name;
+      return res;
     }
 
     function refresh() {
@@ -153,7 +157,7 @@
       });
       $q('#dxOut').innerHTML = html + '</table>';
       $q('#dxGo').disabled = nOk === 0;
-      msg('<span class="ok">' + nOk + ' file sẽ được tạo</span>, ' + nSkip + ' dòng Ship trống bỏ qua' +
+      msg(esc(sheetInfo) + '<span class="ok">' + nOk + ' file sẽ được tạo</span>, ' + nSkip + ' dòng Ship trống bỏ qua' +
           (nBad ? ', <span class="err">' + nBad + ' dòng có vấn đề (xem bảng)</span>' : '') + '.');
     }
 
@@ -161,7 +165,7 @@
       const f = e.target.files[0]; items = []; plan = [];
       $q('#dxOut').innerHTML = ''; $q('#dxGo').disabled = true;
       if (!f) return msg('');
-      try { msg('Đang đọc...'); items = await readTable(f); refresh(); }
+      try { msg('Đang đọc...'); const t = await readTable(f); items = t.items; sheetInfo = 'Đọc trang tính "' + t.sheetName + '" (STT ở cột ' + colName(t.sttPos.c) + ', Shipment ở cột ' + colName(t.shipPos.c) + ', từ dòng ' + t.start + '). '; refresh(); }
       catch (err) { msg('<span class="err">' + esc(err.message) + '</span>'); }
     });
     $q('#dxCheck').addEventListener('click', refresh);
@@ -218,7 +222,7 @@
     });
   }
 
-  const api = { parseTable: parseTable, splitShips: splitShips, matchOne: matchOne, planRow: planRow, planAll: planAll, initUI: initUI };
+  const api = { parseSheet: parseSheet, splitShips: splitShips, matchOne: matchOne, planRow: planRow, planAll: planAll, initUI: initUI };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CPDispatch = api;
   if (typeof document !== 'undefined') {
